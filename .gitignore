@@ -1,0 +1,59 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.pyd
+*.egg-info/
+*.egg
+dist/
+build/
+
+# 测试和缓存
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# IDE
+.vscode/
+.idea/
+
+# 环境
+.env
+.env.*
+!.env.example
+venv/
+.venv/
+
+# Agent配置（可能含API Key）
+config.local.yaml
+config.private.yaml
+secrets.yaml
+
+# 日志
+logs/
+*.log
+
+# 数据
+data/Video/
+data/TXT/
+data/Note/
+data/memory_db/
+Video/
+
+# 数据库
+*.db
+*.sqlite
+*.sqlite3
+
+# 系统
+.DS_Store
+Thumbs.db
+
+# 文档（不上传）
+架构设计.md
+CLAUDE.md

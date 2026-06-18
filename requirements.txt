@@ -1,0 +1,17 @@
+openai>=1.0.0
+faster-whisper>=1.0.0
+Pillow>=9.0.0
+
+torch>=2.0.0
+PyYAML>=6.0
+tqdm>=4.64.0
+
+# API Key 分层加载
+python-dotenv>=1.0.0
+
+# Web UI
+gradio>=4.0.0
+
+# 可选依赖（功能降级，不装也能用）
+# keyring>=24.0.0   # OS 钥匙串存储
+# chromadb>=0.4.0   # 向量检索

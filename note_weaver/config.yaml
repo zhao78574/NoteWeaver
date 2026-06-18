@@ -1,0 +1,103 @@
+# NoteWeaver 配置文件
+# 所有路径、模型参数、策略配置均在此集中管理
+
+# ==========================================
+# API 配置
+#   - DeepSeek: 文本任务（分类、排版、质检、记忆）
+#   - Qwen:    视觉任务（截图分析）
+# ==========================================
+api:
+  deepseek:
+    api_key: ""                            # 留空 = 走多层自动查找（环境变量 → .env → 全局配置 → keychain）
+    base_url: "https://api.deepseek.com"
+    model_fast: "deepseek-chat"
+    model_pro: "deepseek-chat"
+
+  qwen:
+    api_key: ""                            # 同上，多层自动查找
+    base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    model_vision: "qwen-vl-plus"           # 视觉理解（支持图片）
+
+# ==========================================
+# 网络代理（国内网络需要时开启）
+# ==========================================
+proxy:
+  enabled: false                          # 默认关闭，需要时改为 true
+  host: "127.0.0.1"
+  port: 7890
+
+# ==========================================
+# Whisper 语音识别配置
+# ==========================================
+whisper:
+  model_size: "small"                    # tiny/base/small/medium
+  device: "auto"                         # auto/cuda/cpu
+  compute_type: "auto"                   # auto/float16/int8
+  language: "zh"
+
+# ==========================================
+# 截图配置
+# ==========================================
+screenshot:
+  default_interval: 180                  # 默认截图间隔（秒），Classifier 可覆盖
+  min_interval: 30
+  max_interval: 300
+
+# ==========================================
+# 质量把关 (QA) 配置
+# ==========================================
+qa:
+  pass_threshold: 7.0                    # 综合分 ≥ 此值通过
+  fallback_thresholds: [7.0, 6.5, 6.0]  # 第1/2/3次尝试的阈值
+  max_retries: 2                         # 最多回退重排次数
+  dimension_weights:                     # 评分维度权重
+    terminology_accuracy: 0.25
+    structure_clarity: 0.20
+    image_text_alignment: 0.20
+    completeness: 0.15
+    readability: 0.10
+    style_consistency: 0.10
+
+# ==========================================
+# 路径配置
+# ==========================================
+paths:
+  base_dir: ""                           # 自动检测，留空
+  source_video_dir: "Video"              # 源视频目录（笔记/TXT保持此目录结构输出）
+  txt_dir: "data/TXT"
+  note_dir: "data/Note"
+  memory_dir: "data/memory_db"
+  log_dir: "logs"
+
+# ==========================================
+# Vision Agent 配置
+# ==========================================
+vision:
+  max_images_per_batch: 10               # 每批分析的最大图片数
+  skip_low_quality: true                 # 自动跳过模糊/无用图
+  quality_threshold: "medium"            # low/medium/high 才纳入笔记
+
+# ==========================================
+# 视频分类策略映射
+# ==========================================
+classification_strategies:
+  lecture_ppt:
+    screenshot_interval: 60
+    note_style: "detailed"
+    composer_template: "lecture_with_slides"
+  lecture_whiteboard:
+    screenshot_interval: 90
+    note_style: "detailed"
+    composer_template: "lecture_whiteboard"
+  demo:
+    screenshot_interval: 30
+    note_style: "step_by_step"
+    composer_template: "demo_procedure"
+  meeting:
+    screenshot_interval: 180
+    note_style: "outline"
+    composer_template: "meeting_minutes"
+  default:
+    screenshot_interval: 180
+    note_style: "detailed"
+    composer_template: "default"

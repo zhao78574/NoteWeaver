@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "note-weaver"
+version = "1.0.0"
+description = "NoteWeaver — AI笔记数字助理（视频→结构化笔记的Agent自动化管线）"
+readme = "README.md"
+authors = [
+    {name = "NoteWeaver"},
+]
+license = {text = "MIT"}
+requires-python = ">=3.9"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "openai>=1.0.0",
+    "faster-whisper>=1.0.0",
+    "Pillow>=9.0.0",
+
+    "torch>=2.0.0",
+    "PyYAML>=6.0",
+    "tqdm>=4.64.0",
+
+    "python-dotenv>=1.0.0",
+
+    "gradio>=4.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/zhao78574/NoteWeaver"
+Repository = "https://github.com/zhao78574/NoteWeaver"
+
+[project.scripts]
+weaver = "note_weaver.run:main"
+
+[tool.setuptools.packages.find]
+include = ["note_weaver*"]
