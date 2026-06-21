@@ -2,6 +2,7 @@
 
 import os
 import re
+import json
 import threading
 from typing import Any, Dict, List, Optional
 from datetime import datetime
@@ -152,10 +153,19 @@ class Orchestrator:
                 audio_thread = threading.Thread(
                     target=lambda: extract_audio(video_path, audio_tmp)
                 )
-                # 自适应截图间隔
+                # 自适应截图间隔（根据视频长度阶梯调整）
                 dur = get_video_duration(video_path)
-                interval = max(60, min(300, int(dur / 6)))
-                logger.info(f"截图间隔: {interval}s (视频 {dur:.0f}s)")
+                if dur <= 300:       # ≤5min → 每30s一张（约10张）
+                    interval = 30
+                elif dur <= 900:     # 5-15min → 每60s一张（约10-15张）
+                    interval = 60
+                elif dur <= 1800:    # 15-30min → 每90s一张（约15-20张）
+                    interval = 90
+                elif dur <= 3600:    # 30-60min → 每120s一张（约20-30张）
+                    interval = 120
+                else:                # >60min → 每180s一张（20张+）
+                    interval = 180
+                logger.info(f"截图间隔: {interval}s (视频 {dur:.0f}s, 约 {dur//max(interval,1)} 张)")
 
                 screenshot_thread = threading.Thread(
                     target=lambda: setattr(task, 'screenshot_files',
@@ -226,10 +236,20 @@ class Orchestrator:
                 f"视觉 {len(task.vision_results)}张"
             )
 
-            # ====== Step 3: 保存原始 TXT（保持子目录结构） ======
+            # ====== Step 3: 保存转录结果（TXT + JSON） ======
             raw_text = task.transcript.get("raw_text", "")
             self._save_txt(file_base, raw_text, rel_subdir)
             task.txt_path = os.path.join(config.txt_dir, rel_subdir, f"{file_base}.txt")
+
+            # 保存完整转录 JSON（含时间戳，供重排脚本使用）
+            transcript_path = os.path.join(
+                config.txt_dir, rel_subdir, f"{file_base}_transcript.json"
+            )
+            try:
+                with open(transcript_path, "w", encoding="utf-8") as f:
+                    json.dump(task.transcript, f, ensure_ascii=False, indent=2)
+            except Exception as e:
+                logger.warning(f"[Orchestrator] 转录 JSON 保存失败（非致命）: {e}")
 
             # ====== Step 4: 排版 + 质检 (支持回退) ======
             self.state_machine.transition(task, TaskStatus.COMPOSING)

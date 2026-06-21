@@ -196,6 +196,10 @@ class Config:
     def model_pro(self) -> str:
         return self._data["api"]["deepseek"]["model_pro"]
 
+    @property
+    def model_embed(self) -> str:
+        return self._data["api"]["deepseek"].get("model_embed", "deepseek-embedding")
+
     # ---- API (Qwen Vision) ----
     @property
     def qwen_api_key(self) -> str:

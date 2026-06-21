@@ -273,11 +273,18 @@ NoteWeaver/
 
 ## 许可证
 
-[MIT](LICENSE)
+[GNU Affero General Public License v3.0](LICENSE)
 
-Copyright (c) 2026 NoteWeaver
+Copyright (c) 2026 NoteWeaver (zhao78574)
 
-This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
+**允许** ✅
+- 学习、研究、个人使用
+- 修改和分发（必须保留 AGPL-3.0 协议）
+- 开源商用（必须开源全部修改）
+
+**不允许** ❌
+- 闭源商用（如需闭源商用，请联系作者获取商业授权）
+  `Email: zhao78574@gmail.com`
 
 ---
 

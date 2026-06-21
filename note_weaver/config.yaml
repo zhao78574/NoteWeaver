@@ -12,6 +12,7 @@ api:
     base_url: "https://api.deepseek.com"
     model_fast: "deepseek-chat"
     model_pro: "deepseek-chat"
+    model_embed: "deepseek-embedding"
 
   qwen:
     api_key: ""                            # 同上，多层自动查找
