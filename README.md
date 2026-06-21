@@ -22,6 +22,17 @@ NoteWeaver 是一个 AI 驱动的笔记数字助理，接收视频输入，自�
 - **记忆能力**：三层记忆 + 知识图谱自动提取 + 用户画像演化
 - **决策能力**：QA 自检回退 + 自适应截图间隔 + 意图分类路由
 
+## 功能特性
+
+- 🎥 **全自动管线**：视频 → 转录 → 截图 → 排版 → 质检 → 归档，一步到位
+- 🖼️ **PDF/网页处理**：直接输入论文 PDF 或网页链接，自动提取图文生成笔记
+- 📥 **视频下载**：支持 YouTube / B站链接直接下载处理
+- 🧠 **知识图谱**：自动提取概念关系，交互式可视化
+- 🔍 **语义搜索**：离线 TF-IDF 语义搜索笔记库
+- ⌨️ **快捷键支持**：任务运行中按 `Ctrl+C` 取消，返回提示符
+- 📊 **自适应截图**：根据视频长度自动调整截图密度（30s~180s 间隔）
+- ♻️ **QA 回退**：6 维质量评分 + 递减阈值自动重排
+
 ---
 
 ## 安装方法
@@ -199,24 +210,61 @@ proxy:
 weaver
 ```
 
-进入交互界面，可提问、上传视频、管理笔记。
+进入交互界面，支持：
+
+| 操作 | 示例 |
+|------|------|
+| 问答 | 直接输入问题，如 `什么是PIE？` |
+| 处理视频 | 输入视频路径，如 `lecture.mp4` |
+| 处理 PDF | 输入 PDF 路径，如 `paper.pdf` |
+| 处理网页 | 输入网页链接（非视频 URL） |
+| 下载视频 | 输入 YouTube/B站 链接 |
+| 重排笔记 | `重排 笔记名` |
+| 知识图谱 | `graph` |
+| 取消任务 | 运行中按 `Ctrl+C` |
+| 退出 | `/quit` |
 
 ### 单次问答
 
 ```bash
-weaver "什么是PIE？"
+weaver "PIE和TD PIE有什么区别？"
 ```
 
 ### 处理单个视频
 
 ```bash
-weaver --video lecture.mp4
+weaver lecture.mp4
+```
+
+### 处理 PDF
+
+```bash
+weaver paper.pdf
+```
+
+### 处理网页
+
+```bash
+weaver https://example.com/article
+```
+
+### 下载并处理视频
+
+```bash
+weaver https://www.youtube.com/watch?v=xxx
+weaver https://www.bilibili.com/video/BVxxxx
 ```
 
 ### 批量处理
 
 ```bash
 weaver --batch ./videos/
+```
+
+### 知识图谱
+
+```bash
+weaver --graph
 ```
 
 ### Web 界面
