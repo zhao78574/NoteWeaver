@@ -8,6 +8,41 @@ from note_weaver.utils.logger import logger
 from note_weaver.utils.prompts import COMPOSER_SYSTEM, build_composer_user_prompt
 
 
+# ── 时间戳对齐工具函数 ───────────────────────────────────────
+
+def _extract_timestamp_from_filename(image_id: str) -> Optional[float]:
+    """从视频关键帧文件名中解析时间戳（秒）"""
+    m = re.search(r'_(\d+)s\.(?:jpg|png)$', image_id)
+    if m:
+        return float(m.group(1))
+    return None
+
+
+def align_images_to_transcript(
+    vision_results: List[Dict[str, Any]],
+    segments: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """为每张图片找到最接近的转录段落（按时间戳最近邻匹配）"""
+    if not segments or not vision_results:
+        return vision_results
+
+    aligned = []
+    for r in vision_results:
+        img_ts = _extract_timestamp_from_filename(r.get("image_id", ""))
+        if img_ts is not None:
+            best_seg = min(
+                segments,
+                key=lambda s: abs((s["start"] + s["end"]) / 2 - img_ts),
+            )
+            r["timestamp_seconds"] = img_ts
+            r["matched_segment"] = best_seg
+            r["time_diff_seconds"] = round(
+                abs((best_seg["start"] + best_seg["end"]) / 2 - img_ts), 1
+            )
+        aligned.append(r)
+    return aligned
+
+
 # ── 笔记后处理工具函数 ─────────────────────────────────────────
 
 def _extract_hash_from_filename(image_id: str) -> str:
@@ -78,6 +113,8 @@ class ComposerAgent(BaseAgent):
         strategy: Optional[Dict[str, Any]] = None,
         user_context: str = "",
         revision_feedback: str = "",
+        defects: Optional[List[Dict]] = None,
+        segments: Optional[List[Dict[str, Any]]] = None,
     ) -> str:
         """
         Args:
@@ -87,6 +124,8 @@ class ComposerAgent(BaseAgent):
             strategy: 分类+策略配置
             user_context: Memory Agent 提供的用户背景
             revision_feedback: QA回退时的修改意见（空表示首次生成）
+            defects: QA 结构化缺陷列表（优先于 revision_feedback）
+            segments: 可选，转录段落列表，传入后触发图片↔转录段时间戳对齐
 
         Returns:
             完整的 Markdown 笔记内容
@@ -95,8 +134,9 @@ class ComposerAgent(BaseAgent):
         note_style = strategy.get("note_style", "detailed")
         focus_areas = ", ".join(strategy.get("focus_areas", []))
 
-        # 构建图片描述文本
-        image_descriptions = self._format_vision_results(vision_results, file_base)
+        # 构建图片描述文本（含时间戳对齐）
+        image_descriptions = self._format_vision_results(
+            vision_results, file_base, segments=segments)
 
         logger.info(
             f"[Composer] 开始排版: {file_base} "
@@ -134,15 +174,30 @@ class ComposerAgent(BaseAgent):
             logger.info(f"[Composer] 图片占位符替换: {placeholder_count} 张")
         note_content = _fix_broken_markdown_images(note_content)
 
+        # ── 强制移除 --- 分割线（LLM 常误用，需后处理清除） ──
+        note_content = re.sub(r'\n---\s*\n', '\n\n', note_content)
+        note_content = re.sub(r'^---\s*\n', '', note_content, flags=re.MULTILINE)
+        note_content = note_content.strip()
+
         logger.info(f"[Composer] 完成: {len(note_content)} 字符")
         return note_content
 
     def _format_vision_results(
-        self, vision_results: List[Dict[str, Any]], file_base: str
+        self,
+        vision_results: List[Dict[str, Any]],
+        file_base: str,
+        segments: Optional[List[Dict[str, Any]]] = None,
     ) -> str:
-        """将 Vision 分析结果格式化为 Composer 可用的图片描述文本"""
+        """将 Vision 分析结果格式化为 Composer 可用的图片描述文本
+
+        如果提供了 segments，自动执行时间戳对齐。
+        """
         if not vision_results:
             return "（无截图可用）\n"
+
+        # V2：时间戳对齐预处理
+        if segments:
+            vision_results = align_images_to_transcript(vision_results, segments)
 
         lines = []
         included = [r for r in vision_results if r.get("should_include", True)]
@@ -166,6 +221,22 @@ class ComposerAgent(BaseAgent):
                 lines.append(f"  建议图注: {caption}")
             if r.get("key_terms"):
                 lines.append(f"  关键术语: {', '.join(r['key_terms'])}")
+            # V2：时间戳 + 对齐段落引用
+            ts = r.get("timestamp_seconds")
+            if ts is not None:
+                m, s = divmod(int(ts), 60)
+                lines.append(f"  ⏱ 视频时间: [{m:02d}:{s:02d}]")
+            matched = r.get("matched_segment")
+            if matched:
+                seg_text = matched.get("text", "").strip()
+                if len(seg_text) > 80:
+                    seg_text = seg_text[:80] + "…"
+                m1, s1 = divmod(int(matched.get("start", 0)), 60)
+                m2, s2 = divmod(int(matched.get("end", 0)), 60)
+                lines.append(
+                    f"  📎 对应转录 [{m1:02d}:{s1:02d}]-[{m2:02d}:{s2:02d}]: "
+                    f"\"{seg_text}\""
+                )
             lines.append("")
 
         return "\n".join(lines)

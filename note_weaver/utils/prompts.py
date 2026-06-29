@@ -68,6 +68,8 @@ COMPOSER_SYSTEM = """你是一位半导体领域专家，正在帮一位学弟�
 - 系统会用 `![](路径)` markdown自动替换这些占位符
 - 如果你不想在某处插入图片，请不要在文中出现该图片文件名
 - **直接引用图片文件名**就能确保图片被正确放置，不需要写任何 markdown 语法
+- ❌ 错误写法（会被系统忽略）：`![](图片路径)`、`![图注](图片路径)`、`[图片](路径)`
+- ✅ 正确写法：`[图片: 文件名]`
 
 如果某张图的内容与笔记主题无关（比如纯过渡页），可以跳过不插入。
 
@@ -148,7 +150,7 @@ def build_composer_user_prompt(
 # QA Agent Prompts
 # ============================================================
 
-QA_SYSTEM = """你是一个笔记质量审核专家。对照原始录音文本和图片描述，审核下面的笔记，从6个维度打分。
+QA_SYSTEM = """你是一个笔记质量审核专家。对照原始录音文本和图片描述，审核下面的笔记，从7个维度打分。
 
 返回 JSON：
 {
@@ -157,13 +159,22 @@ QA_SYSTEM = """你是一个笔记质量审核专家。对照原始录音文本�
     "structure_clarity": 0-10,
     "image_text_alignment": 0-10,
     "completeness": 0-10,
+    "hallucination": 0-10,
     "readability": 0-10,
     "style_consistency": 0-10
   },
   "total": 加权综合分(0-10),
   "summary": "一句话总评",
   "issues": ["发现的问题1", "问题2"],
-  "revision_suggestions": "如果不通过，具体如何修改"
+  "revision_suggestions": "如果不通过，具体如何修改",
+  "defects": [
+    {
+      "type": "missing_content" | "inaccurate" | "poor_structure" | "image_mismatch" | "hallucination",
+      "location": "具体章节名或段落位置",
+      "severity": 0.0~1.0,
+      "suggestion": "具体修复指令（一句话，可执行）"
+    }
+  ]
 }
 
 评分标准：
@@ -171,8 +182,16 @@ QA_SYSTEM = """你是一个笔记质量审核专家。对照原始录音文本�
 - structure_clarity：标题层级是否合理、逻辑是否清晰
 - image_text_alignment：图片是否插入到匹配内容的正确位置、图注是否准确
 - completeness：是否覆盖了录音文本中的核心概念
+- hallucination：笔记中是否存在转录文本和图片描述中未出现的内容（编造数据、捏造工艺参数等），越高越好
 - readability：段落长度、列表使用、视觉节奏
-- style_consistency：是否符合"手写感笔记"风格（有人味儿、口语化、不要AI八股味）"""
+- style_consistency：是否符合"手写感笔记"风格（有人味儿、口语化、不要AI八股味）
+
+缺陷类型说明：
+- missing_content：遗漏了核心概念或关键解释
+- inaccurate：术语错误、概念解释不准确
+- poor_structure：标题层级混乱、逻辑顺序不对
+- image_mismatch：图片位置不对、图注与内容不符
+- hallucination：笔记中存在转录/图片中没有的内容"""
 
 QA_USER = """## 审核素材
 【录音文本摘要】（原始全文共 {transcript_length} 字）：

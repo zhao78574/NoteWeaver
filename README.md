@@ -2,20 +2,66 @@
 
 > AI 笔记数字助理 — 视频 → 结构化笔记的 Agent 自动化管线
 
+[![CI](https://github.com/zhao78574/NoteWeaver/actions/workflows/test.yml/badge.svg)](https://github.com/zhao78574/NoteWeaver/actions/workflows/test.yml)
+[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/)
+[![License](https://img.shields.io/badge/license-AGPL--3.0-green.svg)](LICENSE)
+
 ## 项目简介
 
 NoteWeaver 是一个 AI 驱动的笔记数字助理，接收视频输入，自动完成**分类 → 转录 → 截图理解 → 排版 → 质检 → 归档**全流程，输出结构化笔记。
 
-**核心架构**：Orchestrator 中央调度 6 个专业子 Agent：
+### 架构图
+
+```mermaid
+flowchart TB
+    subgraph Input["📥 输入"]
+        V[视频/音频]
+        PDF[PDF 文档]
+        URL[网页链接]
+        YT[YouTube/B站]
+    end
+
+    subgraph Agent["🤖 Agent 管线"]
+        CL[Classifier<br/>视频分类]
+        TR[Transcriber<br/>faster-whisper 转录]
+        VI[Vision<br/>Qwen-VL 截图分析]
+        CO[Composer<br/>DeepSeek 笔记排版]
+        QA[QA<br/>6维质量评分+回退]
+        ME[Memory<br/>知识图谱+画像]
+    end
+
+    subgraph Output["📝 输出"]
+        MD[Markdown 笔记]
+        KG[知识图谱]
+        IDX[语义搜索索引]
+    end
+
+    V --> CL
+    CL --> TR
+    CL --> VI
+    TR --> CO
+    VI --> CO
+    CO --> QA
+    QA -- 不通过 --> CO
+    QA -- 通过 --> MD
+    MD --> ME
+    ME --> KG
+    ME --> IDX
+    PDF --> VI --> CO --> QA --> MD
+    URL --> CO --> QA --> MD
+    YT --> V
+```
+
+### 核心组件
 
 | Agent | 职责 | 模型 |
 |-------|------|------|
-| **Classifier** | 视频分类 + 截图策略选择 | DeepSeek |
+| **Classifier** | 视频分类 + 截图策略选择 | DeepSeek Chat |
 | **Transcriber** | 语音识别（只跑一次） | faster-whisper |
 | **Vision** | 截图语义理解 + 图注生成 | Qwen VL |
-| **Composer** | 笔记排版生成 | DeepSeek |
-| **QA** | 6 维质量评分 + 递减阈值回退重排 | DeepSeek |
-| **Memory** | 三层记忆 + 知识图谱自维护 | DeepSeek |
+| **Composer** | 笔记排版生成 | DeepSeek Reasoner |
+| **QA** | 6 维质量评分 + 递减阈值回退重排 | DeepSeek Reasoner |
+| **Memory** | 三层记忆 + 知识图谱自维护 | DeepSeek Chat |
 
 **三项能力**：
 - **自动执行**：接收视频路径 → 全自动管线 → 笔记归档
@@ -219,7 +265,10 @@ weaver
 | 处理 PDF | 输入 PDF 路径，如 `paper.pdf` |
 | 处理网页 | 输入网页链接（非视频 URL） |
 | 下载视频 | 输入 YouTube/B站 链接 |
+| 批量处理合集 | 输入合集链接，拆分多批如 `1-10;11-18;19-25;26-36` |
 | 重排笔记 | `重排 笔记名` |
+| 删除笔记 | `删除 笔记名` 或 `删除"C:\path\note.md"` |
+| 列出笔记 | `list` |
 | 知识图谱 | `graph` |
 | 取消任务 | 运行中按 `Ctrl+C` |
 | 退出 | `/quit` |
@@ -274,6 +323,69 @@ python note_weaver/web_ui.py
 ```
 
 浏览器打开 Gradio 界面，支持聊天和视频上传。
+
+
+---
+
+## 示例输出
+
+### 笔记预览
+
+```markdown
+# MOSFET 工作原理
+
+## 1. 基本结构
+
+MOSFET（Metal-Oxide-Semiconductor Field-Effect Transistor，
+金属-氧化物-半导体场效应晶体管）是数字电路的核心器件。
+
+**重点**：MOSFET 是一个**电压控制电流**的器件——
+栅极电压控制源漏之间的电流。
+
+### 四端结构
+
+| 端子 | 全称 | 作用 |
+|------|------|------|
+| G | Gate 栅极 | 控制端 |
+| S | Source 源极 | 载流子来源 |
+| D | Drain 漏极 | 载流子流出 |
+| B | Bulk 衬底 | 体区，通常接地 |
+
+### 工作原理
+
+当栅极加正电压 Vgs > Vth（阈值电压）时：
+1. 栅极下面的 P 型衬底表面**反型** → 形成 N 型导电沟道
+2. 源漏之间加 Vds → 电子从源极流向漏极 → 电流 Id
+
+**容易搞混**：
+- **增强型**：Vgs=0 时没有沟道，需要加电压才会导通
+- **耗尽型**：Vgs=0 时已有沟道，需要加电压才会夹断
+- CMOS 工艺用的是**增强型**！
+```
+
+### 视频处理流水
+
+```text
+输入: 45分钟教学视频 → Faster-Whisper 转录 → Qwen-VL 截图分析
+                                          → DeepSeek 排版 → QA 质检 → 笔记归档
+输出: data/Note/1.工艺速通/MOSFET_工作原理.md
+```
+
+### 合集合并（多批转笔记）
+
+```bash
+❯ 合集 https://www.bilibili.com/list/xxx
+共 36 集
+
+  范围? 1-10 / 1-10;11-18;19-25;26-36 多批
+❯ 1-10;11-18;19-25;26-36
+
+共 4 批，每批出一篇独立笔记:
+  第1批: 1-10 (10集)
+  第2批: 11-18 (8集)
+  第3批: 19-25 (7集)
+  第4批: 26-36 (11集)
+```
 
 ---
 

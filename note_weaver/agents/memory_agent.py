@@ -10,6 +10,23 @@ from note_weaver.utils.logger import logger
 from note_weaver.utils.config import config
 
 
+# ════════════════════════════════════════════════════════════════
+# 知识图谱 Schema 常量
+# ════════════════════════════════════════════════════════════════
+
+NODE_TYPES = ["concept", "document", "chunk", "media_frame"]
+
+EDGE_TYPES = [
+    "supports",        # A 支撑/支持 B
+    "contradicts",     # A 与 B 相悖
+    "derives_from",    # A 衍生自 B
+    "similar_to",      # A 相似于 B
+    "prerequisite",    # A 是 B 的先修知识
+    "part_of",         # A 是 B 的组成部分
+    "example_of",      # A 是 B 的一个实例
+]
+
+
 class MemoryAgent(BaseAgent):
     """管理用户画像、知识图谱和交互历史"""
 
@@ -210,12 +227,22 @@ class MemoryAgent(BaseAgent):
         note_content: str,
         classification: Dict,
     ) -> List[Dict]:
-        """从笔记中提取核心概念"""
+        """从笔记中提取核心概念（含关系类型标注）"""
         from note_weaver.utils.prompts import MEMORY_EXTRACT_CONCEPTS_SYSTEM
 
         domain = classification.get("domain", "")
+        relation_types = ", ".join(EDGE_TYPES)
         prompt = (
             f"领域: {domain}\n\n"
+            f"## 关系类型（请对每个概念间关系标注类型）\n"
+            f"可用关系类型: {relation_types}\n\n"
+            f"- supports（支撑/支持）\n"
+            f"- contradicts（矛盾/相悖）\n"
+            f"- derives_from（衍生自）\n"
+            f"- prerequisite（先修/前置知识）\n"
+            f"- part_of（组成/包含）\n"
+            f"- example_of（举例/实例）\n"
+            f"- similar_to（相似）\n\n"
             f"## 笔记内容\n{note_content[:5000]}"
         )
 
@@ -232,7 +259,12 @@ class MemoryAgent(BaseAgent):
             return []
 
     def _merge_concepts(self, new_concepts: List[Dict], source_note: str):
-        """合并新概念到知识图谱（去重 + 更新关联）"""
+        """合并新概念到知识图谱（去重 + 类型化关联 + 兼容旧数据）
+
+        支持两种关系格式：
+        - 新格式: relations=[{"target": "...", "type": "supports"}, ...]
+        - 旧格式: related_to=["概念1", "概念2"] → 自动升级为 "related" 类型
+        """
         existing = {c["name"]: c for c in self.knowledge_graph["concepts"]}
 
         for nc in new_concepts:
@@ -245,20 +277,80 @@ class MemoryAgent(BaseAgent):
                 sources = existing[name].setdefault("source_notes", [])
                 if source_note not in sources:
                     sources.append(source_note)
+                # 合并旧关系（type=None 的兼容）
+                existing_rels = existing[name].get("relations", [])
+                new_rels = nc.get("relations", [])
+                existing[name]["relations"] = self._merge_relations(
+                    existing_rels, new_rels)
             else:
                 nc["source_notes"] = [source_note]
                 nc["first_seen"] = datetime.now().isoformat()
+                nc.setdefault("relations", [])
+                nc.setdefault("related_to", [])
                 self.knowledge_graph["concepts"].append(nc)
 
-        # 更新关联关系
+        # 从 relations 字段构建图边（新格式优先）
+        all_new_relations = []  # [(from, to, type), ...]
         for nc in new_concepts:
+            name = nc.get("name", "")
+            # 新格式 relations
+            for rel in nc.get("relations", []):
+                target = rel.get("target", "")
+                rel_type = rel.get("type", "related")
+                if target:
+                    all_new_relations.append((name, target, rel_type))
+            # 旧格式 related_to（向后兼容）
             for related in nc.get("related_to", []):
+                # 避免与 relations 重复
+                if not any(r["target"] == related for r in nc.get("relations", [])):
+                    all_new_relations.append((name, related, "related"))
+
+        for from_name, to_name, rel_type in all_new_relations:
+            # 去重检测
+            is_dup = any(
+                r["from"] == from_name and r["to"] == to_name
+                and (r.get("type", "related") == rel_type or rel_type == "related")
+                for r in self.knowledge_graph["relations"]
+            )
+            if not is_dup:
                 self.knowledge_graph["relations"].append({
-                    "from": nc.get("name", ""),
-                    "to": related,
-                    "type": "related",
+                    "from": from_name,
+                    "to": to_name,
+                    "type": rel_type,
                     "source": source_note,
                 })
+
+    @staticmethod
+    def _merge_relations(existing_relations: List[Dict],
+                         new_relations: List[Dict]) -> List[Dict]:
+        """合并关系，兼容旧数据（type=None / 无 type 的无类型关系）
+
+        旧格式的 related_to 不会在这里出现（已在 _merge_concepts 中处理）。
+        这里处理 relations 列表中的类型化关系。
+        """
+        seen = set()
+        merged = list(existing_relations)  # 保留现有
+
+        for nr in new_relations:
+            target = nr.get("target", "")
+            rel_type = nr.get("type", "related")
+            # 兼容旧数据：无 type 的标记为 related
+            if "type" not in nr:
+                nr["type"] = "related"
+                rel_type = "related"
+            key = (target, rel_type)
+            if key not in seen:
+                seen.add(key)
+                # 更新 instead of appending（如果已存在同 target 但不同 type）
+                replaced = False
+                for i, er in enumerate(merged):
+                    if er.get("target") == target:
+                        merged[i] = nr
+                        replaced = True
+                        break
+                if not replaced:
+                    merged.append(nr)
+        return merged
 
     # ---- JSON 文件操作 ----
 

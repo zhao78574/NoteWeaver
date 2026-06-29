@@ -12,7 +12,9 @@ class TaskStatus(enum.Enum):
     PENDING = "pending"                   # 刚入队
     CLASSIFYING = "classifying"           # 分类中
     EXTRACTING = "extracting"             # 提取音频+截图
+    ROUTING = "routing"                   # 路由分析中（新）
     TRANSCRIBING = "transcribing"         # 语音识别中
+    CORRECTING = "correcting"             # 纠错中（新）
     VISION_ANALYZING = "vision_analyzing" # 视觉分析中
     COMPOSING = "composing"               # 排版中
     QA_REVIEWING = "qa_reviewing"         # 质检中
@@ -96,7 +98,7 @@ class TaskStateMachine:
         """创建新任务"""
         import os
         file_name = os.path.basename(video_path)
-        file_base = os.path.splitext(file_name)[0]
+        file_base = os.path.splitext(file_name)[0].replace(' ', '_')
 
         task = Task(
             video_path=video_path,

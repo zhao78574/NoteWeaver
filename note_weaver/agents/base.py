@@ -6,7 +6,6 @@ import base64
 import os
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
-from openai import OpenAI
 from note_weaver.utils.logger import logger
 from note_weaver.utils.config import config
 
@@ -16,12 +15,13 @@ class BaseAgent(ABC):
 
     def __init__(self, model_name: Optional[str] = None):
         self.model_name = model_name or config.model_fast
-        self._client: Optional[OpenAI] = None
+        self._client: Optional[Any] = None
 
     @property
-    def client(self) -> OpenAI:
+    def client(self) -> "OpenAI":
         """懒加载 OpenAI 客户端（指向 DeepSeek）"""
         if self._client is None:
+            from openai import OpenAI
             self._client = OpenAI(
                 api_key=config.deepseek_api_key,
                 base_url=config.deepseek_base_url,

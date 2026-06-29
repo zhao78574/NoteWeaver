@@ -12,6 +12,10 @@ python-dotenv>=1.0.0
 # Web UI
 gradio>=4.0.0
 
+# 检索
+rank_bm25>=0.2.0
+
 # 可选依赖（功能降级，不装也能用）
-# keyring>=24.0.0   # OS 钥匙串存储
-# chromadb>=0.4.0   # 向量检索
+# keyring>=24.0.0           # OS 钥匙串存储
+# chromadb>=0.4.0           # 向量检索
+sentence-transformers>=3.0.0  # Hybrid Retrieval 语义通道（~500MB）

@@ -1,84 +1,70 @@
-"""对话问答 Skill — 基于笔记库的知识问答（带缓存）"""
+"""对话问答 Skill — RAG: BM25 检索 + LLM 自由对话
 
-import os, json
+只要设了 DEEPSEEK_API_KEY，用户问什么都能答。
+笔记库有内容时自动引用笔记，没有时自由对话。
+"""
+
+import os
 from openai import OpenAI
 from note_weaver.utils.config import config
 from note_weaver.utils.logger import logger
+from note_weaver.utils.embeddings import HybridRetrieval
 
 
-_SYSTEM = """你是一个学习助理，基于用户的笔记库回答问题。
+_SYSTEM = """# 角色
+你是一个 AI 学习助理，名叫 NoteWeaver。
 
-规则：
-1. 优先引用笔记中的具体内容，标注来源笔记文件名
-2. 如果笔记中有明确答案，直接引用
-3. 如果涉及多个笔记，对比分析
-4. 如果笔记中没有答案，诚实告知并建议查阅方向
-5. 保持有人味儿的语气，不要AI八股味
-6. 回答简洁，问什么答什么"""
-
-# 笔记缓存 {rel_path: {"mtime": float, "content": str}}
-_note_cache: dict[str, dict] = {}
-_cache_loaded = False
-
-
-def _load_notes() -> str:
-    """加载笔记库（带缓存，只重读有变动的文件）"""
-    global _cache_loaded
-    note_dir = config.note_dir
-    if not os.path.isdir(note_dir):
-        return ""
-
-    changed = 0
-    context_parts = []
-
-    for root, dirs, files in os.walk(note_dir):
-        for f in sorted(files):
-            if not f.endswith(".md"):
-                continue
-            path = os.path.join(root, f)
-            rel = os.path.relpath(path, note_dir)
-            try:
-                mtime = os.path.getmtime(path)
-                # 缓存命中且未变动 → 直接用
-                if rel in _note_cache and _note_cache[rel]["mtime"] == mtime:
-                    context_parts.append(f"--- {rel} ---\n{_note_cache[rel]['content']}")
-                    continue
-
-                # 读文件并缓存
-                with open(path, encoding="utf-8") as fp:
-                    content = fp.read()
-                content = content.replace('<center>', '').replace('</center>', '')
-                content = content.replace('<font face="仿宋" color=orange>', '')
-                content = content.replace('<font face="微软雅黑">', '')
-                content = content.replace('</font>', '')
-                content = content[:3000]  # 截断
-                _note_cache[rel] = {"mtime": mtime, "content": content}
-                context_parts.append(f"--- {rel} ---\n{content}")
-                changed += 1
-            except Exception:
-                continue
-
-    _cache_loaded = True
-    if changed:
-        logger.info(f"[Chat] 缓存更新: {changed} 篇新/变更笔记")
-
-    if not context_parts:
-        return ""
-
-    context = "\n\n".join(context_parts)
-    if len(context) > 30000:
-        context = context[:30000] + "\n...(truncated)"
-    return context
+# 能力
+1. 如果下面提供了笔记库内容，优先引用笔记回答问题，标注来源
+2. 如果笔记库没有相关内容，用自己的知识回答
+3. 如果用户问的是纯聊天/日常话题，自然对话即可
+4. 回答简洁明了，可画 ASCII 图说明概念
+5. 保持有人味儿的语气，不要AI八股文"""
 
 
 def chat(question: str) -> str:
-    """基于笔记库回答用户问题"""
-    context = _load_notes()
+    """RAG 问答：检索 → 生成
 
-    if not context:
-        return "笔记库为空，请先处理一些视频。"
+    不再加载全部笔记，而是从 BM25 + 可选 Embedding 的混合检索中
+    召回最相关的 top-k 段落，拼成上下文后交给 LLM。
 
-    # 调用 DeepSeek
+    当笔记库为空或检索无结果时，退化为纯 LLM 对话。
+    """
+    # ── 1. 检索相关段落 ──
+    context = ""
+    has_notes = False
+    try:
+        hybrid = HybridRetrieval(use_semantic=False)
+        hybrid.build()
+        results = hybrid.search(question, top_k=5)
+        if results:
+            has_notes = True
+            context_parts = []
+            for r in results:
+                src = r.get("source", "")
+                title = r.get("title", "")
+                snippet = r.get("snippet", "")
+                score = r.get("score", 0)
+                context_parts.append(
+                    f"--- {title} ({src}) [relevance={score:.2f}] ---\n{snippet}"
+                )
+            context = "\n\n".join(context_parts)
+            logger.info(
+                f"[Chat] RAG: 检索到 {len(results)} 段, "
+                f"最高分 {results[0].get('score', 0):.2f}"
+            )
+    except Exception as e:
+        logger.warning(f"[Chat] 检索失败: {e}")
+
+    # ── 2. 拼上下文 ──
+    user_content = question
+    if has_notes and context:
+        user_content = (
+            f"## 笔记库（检索结果）\n{context}\n\n"
+            f"## 用户问题\n{question}"
+        )
+
+    # ── 3. LLM 生成 ──
     try:
         config.setup_proxy()
         client = OpenAI(
@@ -89,10 +75,10 @@ def chat(question: str) -> str:
             model=config.model_fast,
             messages=[
                 {"role": "system", "content": _SYSTEM},
-                {"role": "user", "content": f"## 笔记库\n{context}\n\n## 用户问题\n{question}"},
+                {"role": "user", "content": user_content},
             ],
-            temperature=0.5,
+            temperature=0.7,
         )
         return resp.choices[0].message.content or "（无响应）"
     except Exception as e:
-        return f"问答失败: {e}"
+        return f"回答失败: {e}"

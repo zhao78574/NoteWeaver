@@ -45,7 +45,7 @@ def extract_from_pdf(pdf_path: str, output_dir: Optional[str] = None) -> Dict[st
     import fitz  # PyMuPDF
 
     pdf_path = str(Path(pdf_path).resolve())
-    file_base = Path(pdf_path).stem
+    file_base = Path(pdf_path).stem.replace(' ', '_')
     img_dir = Path(output_dir) if output_dir else None
 
     doc = fitz.open(pdf_path)

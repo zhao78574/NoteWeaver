@@ -2,8 +2,7 @@
 
 import os
 import time
-from typing import Any, Dict, List
-from faster_whisper import WhisperModel
+from typing import Any, Dict, List, Optional
 from .base import BaseAgent
 from note_weaver.utils.logger import logger
 from note_weaver.utils.config import config
@@ -21,6 +20,8 @@ class TranscriberAgent(BaseAgent):
         """延迟加载 Whisper 模型（全局只加载一次）"""
         if self._whisper_loaded:
             return
+
+        from faster_whisper import WhisperModel
 
         wcfg = config.whisper_config()
         model_size = wcfg["model_size"]
@@ -70,6 +71,7 @@ class TranscriberAgent(BaseAgent):
             timestamped_lines.append(f"[{m:02d}:{s:02d}] {seg.text}")
             raw_parts.append(seg.text)
             seg_list.append({
+                "segment_id": f"seg_{len(seg_list):04d}",
                 "start": round(seg.start, 1),
                 "end": round(seg.end, 1),
                 "text": seg.text,

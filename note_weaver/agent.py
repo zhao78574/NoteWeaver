@@ -16,9 +16,27 @@ from typing import Optional
 
 from note_weaver.utils.config import config
 from note_weaver.utils.logger import logger
+from note_weaver.utils.style import dashboard_panel, console
 from note_weaver.agents.orchestrator import Orchestrator
 from note_weaver.skills.search import search as search_notes
 from note_weaver.skills.chat import chat as chat_notes
+
+
+# ── 意图分类 System Prompt ──────────────────────────────────
+_INTENT_SYSTEM = """你是一个意图分类器。根据用户的输入，判断他想做什么，只返回一个单词。
+
+分类规则：
+- process_video: 用户想处理视频/音频/PDF/网页，提到"转笔记""处理""下载"等
+- read_note: 用户想读/讲解/解释某篇笔记，提到"讲解""读笔记""看一下这篇""帮我看看"
+- summarize: 用户想总结某篇笔记或文章
+- explain: 用户想问"为什么""怎么理解""是什么意思"
+- compare: 用户想对比两个东西
+- search: 用户想搜索知识库中的信息
+- stats: 用户想看统计/概况/进度
+- list: 用户想列出所有笔记
+- chat: 以上都不符合，纯聊天/问答
+
+只返回一个单词。"""
 
 
 # ============================================================
@@ -79,27 +97,60 @@ class NoteWeaverAgent:
         }
 
     def _classify_intent(self, text: str) -> str:
+        """用 LLM 理解用户意图，替代关键词匹配"""
         if not text or not text.strip():
             return "autonomous"
+
         t = text.strip().lower()
 
+        # ── 特殊命令（不走 LLM） ──
         if t in ("/quit", "/exit", "quit", "exit", "退出"):
             return "quit"
+        if t in ("/stop", "/pause", "stop", "pause"):
+            return "stop"
 
-        process_keywords = ["处理", "转成笔记", "跑一下", "跑这个", "处理视频",
-                           "process", "视频", ".mp4", "转笔记"]
-        stats_keywords = ["统计", "仪表盘", "学了什么", "进度", "总结", "报告", "概况", "最近"]
-        chat_keywords = ["搜索", "查找", "找", "有没有", "什么是",
-                        "怎么", "如何", "区别", "对比",
-                        "?", "？", "问", "聊", "说说", "解释", "为什么"]
-
-        if any(k in t for k in process_keywords):
+        # ── 快速关键词兜底 ──
+        if any(kw in t for kw in
+               ("处理视频", "转成笔记", "处理 ", ".mp4", ".mkv", ".avi")):
             return "process_video"
-        if any(k in t for k in stats_keywords):
-            return "stats"
-        if any(k in t for k in chat_keywords):
+
+        # ── 用 LLM 理解意图 ──
+        try:
+            config.setup_proxy()
+            from openai import OpenAI
+            client = OpenAI(
+                api_key=config.deepseek_api_key,
+                base_url=config.deepseek_base_url,
+            )
+            resp = client.chat.completions.create(
+                model=config.model_fast,
+                messages=[{"role": "system", "content": _INTENT_SYSTEM},
+                          {"role": "user", "content": text}],
+                temperature=0.1,
+                max_tokens=50,
+            )
+            intent = resp.choices[0].message.content.strip().lower()
+            # 验证合法意图
+            valid = {"process_video", "chat", "search", "read_note",
+                     "stats", "summarize", "explain", "compare", "list"}
+            for v in valid:
+                if v in intent:
+                    return v
             return "chat"
-        return "chat"
+        except Exception as e:
+            logger.warning(f"[Agent] LLM 分类失败，走关键词兜底: {e}")
+            # ── LLM 不可用时的关键词兜底 ──
+            process_kw = ["处理", "转笔记", "跑一下", "视频", ".mp4", ".mkv"]
+            stats_kw = ["统计", "学了什么", "进度", "报告", "概况"]
+            read_kw = ["讲解", "读笔记", "看看", "这篇笔记", "这个笔记",
+                       "读一下", "讲一下", "解释一下", "帮我看看"]
+            if any(k in t for k in process_kw):
+                return "process_video"
+            if any(k in t for k in stats_kw):
+                return "stats"
+            if any(k in t for k in read_kw):
+                return "read_note"
+            return "chat"
 
     def _get_knowledge_stats(self) -> dict:
         kg_path = os.path.join(config.memory_dir, "knowledge_graph.json")
@@ -117,7 +168,7 @@ class NoteWeaverAgent:
         if os.path.exists(profile_path):
             with open(profile_path, encoding="utf-8") as f:
                 profile = json.load(f)
-            last = profile.get("last_updated", "")
+            last = profile.get("last_visit", "")
             if last:
                 try:
                     last_dt = datetime.fromisoformat(last)
@@ -162,6 +213,23 @@ class NoteWeaverAgent:
         elif intent == "chat":
             action["question"] = user_input
 
+        elif intent == "read_note":
+            action["type"] = "read_note"
+            # 尝试从输入中提取笔记路径或名称
+            note_path_or_name = self._extract_note_ref(user_input)
+            if note_path_or_name:
+                action["note_ref"] = note_path_or_name
+            else:
+                action["note_ref"] = user_input
+            action["question"] = user_input
+
+        elif intent in ("explain", "summarize", "compare"):
+            action["type"] = "chat"
+            action["question"] = user_input
+
+        elif intent == "list":
+            action["type"] = "list_notes"
+
         elif intent == "proactive_checkin":
             action["message"] = "long_time_no_see"
 
@@ -199,6 +267,62 @@ class NoteWeaverAgent:
             p = pathlib.Path(full)
             if p.exists():
                 return str(p.resolve())
+
+        return None
+
+    @staticmethod
+    def _extract_note_ref(text: str) -> Optional[str]:
+        """尝试从用户输入中提取笔记名称或路径"""
+        import pathlib as _pl
+
+        # 1) 显式路径
+        for q in ('"', '""', "'"):
+            if q in text:
+                parts = text.split(q)
+                for i, part in enumerate(parts):
+                    if i % 2 == 1 and part.strip():
+                        p = _pl.Path(part.strip())
+                        if p.exists() and p.suffix == ".md":
+                            return str(p.resolve())
+
+        for m in re.finditer(r'([A-Za-z]:[\\/][^\s,;)\]}"\']+\.md)', text):
+            p = _pl.Path(m.group(1).strip())
+            if p.exists():
+                return str(p.resolve())
+
+        # 2) 从常用笔记目录搜索匹配的 .md 文件名
+        note_dir = config.note_dir
+        if note_dir and _pl.Path(note_dir).exists():
+            # 去掉可能的 .md 后缀和引号
+            name = text.strip().strip('"\'')
+            # 提取可能的文件名关键词
+            import re as _re
+            # 常见中文句式："讲解一下 xxx笔记" "读一下 xxx"
+            patterns = [
+                r'(?:讲解|读|看|总结|解释)(?:一下)?\s*[：:]\s*(.+?)(?:[，。！？]|$)',
+                r'(?:讲解|读|看|总结|解释)(?:一下)?\s*(.+?)(?:\.md)?\s*$',
+                r'["\'](.+?\.md)["\']',
+            ]
+            candidates = []
+            for pat in patterns:
+                m = _re.search(pat, text)
+                if m:
+                    candidates.append(m.group(1).strip())
+
+            # 也搜索所有 .md 文件进行模糊匹配
+            name_keywords = name.replace(".md", "").replace("\\", "/").split("/")[-1]
+            for root, dirs, files in os.walk(str(note_dir)):
+                for f in files:
+                    if not f.endswith(".md"):
+                        continue
+                    stem = f[:-3]
+                    # 精确匹配
+                    if name_keywords == stem or name_keywords in stem:
+                        return str(_pl.Path(root) / f)
+                    # 对候选词匹配
+                    for c in candidates:
+                        if c == stem or c in stem or stem in c:
+                            return str(_pl.Path(root) / f)
 
         return None
 
@@ -261,6 +385,15 @@ class NoteWeaverAgent:
                 config.setup_proxy()
                 result["data"] = chat_notes(action["question"])
 
+            elif atype == "read_note":
+                config.setup_proxy()
+                note_ref = action.get("note_ref", "")
+                question = action.get("question", "")
+                result["data"] = self._read_and_explain_note(note_ref, question)
+
+            elif atype == "list_notes":
+                result["data"] = self._list_all_notes()
+
             elif atype == "stats":
                 result["data"] = self._build_stats_report(obs)
 
@@ -290,7 +423,7 @@ class NoteWeaverAgent:
             if os.path.exists(profile_path):
                 with open(profile_path, encoding="utf-8") as f:
                     profile = json.load(f)
-            profile["last_active"] = datetime.now().isoformat()
+            profile["last_visit"] = datetime.now().isoformat()
             with open(profile_path, "w", encoding="utf-8") as f:
                 json.dump(profile, f, ensure_ascii=False, indent=2)
         except Exception:
@@ -299,6 +432,159 @@ class NoteWeaverAgent:
     # ================================================================
     # 5. 响应 (Respond)
     # ================================================================
+
+    def _read_and_explain_note(self, note_ref: str, question: str) -> str:
+        """读取并讲解笔记"""
+        import pathlib as _pl
+
+        # 1) 先尝试直接作为路径
+        note_path = None
+        if _pl.Path(note_ref).exists() and note_ref.endswith(".md"):
+            note_path = note_ref
+        elif _pl.Path(note_ref).exists():
+            # 可能是目录，找目录下的 .md
+            p = _pl.Path(note_ref)
+            if p.is_dir():
+                mds = sorted(p.glob("*.md"))
+                if mds:
+                    note_path = str(mds[0])
+        else:
+            # 2) 在笔记目录中模糊搜索
+            note_dir = _pl.Path(config.note_dir)
+            if note_dir.exists():
+                # 去掉路径元素，取最后一段作为关键词
+                keywords = note_ref.replace(".md", "").replace("\\", "/").split("/")[-1]
+                for root, dirs, files in os.walk(str(note_dir)):
+                    for f in files:
+                        if not f.endswith(".md"):
+                            continue
+                        stem = f[:-3]
+                        if keywords in stem or stem in keywords:
+                            note_path = str(_pl.Path(root) / f)
+                            break
+                    if note_path:
+                        break
+
+        if not note_path or not os.path.isfile(note_path):
+            # 搜索结果提示
+            note_dir = config.note_dir
+            matches = []
+            if note_dir:
+                for root, dirs, files in os.walk(note_dir):
+                    for f in files:
+                        if f.endswith(".md"):
+                            matches.append(os.path.join(root, f))
+            hint = f"找到 {len(matches)} 篇笔记。试试说「讲解 03_工艺流程02」\n\n📚 笔记示例："
+            for m in matches[:10]:
+                rel = os.path.relpath(m, note_dir)
+                hint += f"\n  · {rel[:-3]}"
+            return hint
+
+        # 3) 读取笔记内容
+        with open(note_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        # 4) 用 LLM 讲解
+        from openai import OpenAI
+        client = OpenAI(
+            api_key=config.deepseek_api_key,
+            base_url=config.deepseek_base_url,
+        )
+        _EXPLAIN_SYSTEM = """你是一个专业的学习助手。你会收到一篇笔记和用户的问题。
+
+请根据笔记内容回答用户的问题。要求：
+1. 用通俗易懂的语言解释
+2. 画 ASCII 结构图辅助理解
+3. 举例子帮助理解
+4. 如果笔记中有图片占位符(![](...))，说明此处有插图的用意
+5. 如果用户没提具体问题，就先概括笔记核心内容，再逐段讲解
+6. 保持自然对话语气，不要AI八股"""
+
+        resp = client.chat.completions.create(
+            model=config.model_fast,
+            messages=[
+                {"role": "system", "content": _EXPLAIN_SYSTEM},
+                {"role": "user", "content": (
+                    f"## 笔记文件\n{os.path.basename(note_path)}\n\n"
+                    f"## 笔记内容\n{content[:12000]}\n\n"
+                    f"## 用户问题\n{question if question and '讲解' not in question else '请帮我讲解这篇笔记'}"
+                )},
+            ],
+            temperature=0.5,
+        )
+        return resp.choices[0].message.content or "（无响应）"
+
+    @staticmethod
+    def _list_all_notes() -> str:
+        """列出所有笔记"""
+        note_dir = config.note_dir
+        if not note_dir or not os.path.isdir(note_dir):
+            return "笔记库为空"
+
+        categories = {}
+        for root, dirs, files in os.walk(note_dir):
+            cat = os.path.basename(root)
+            if cat == os.path.basename(note_dir):
+                continue
+            mds = sorted([f[:-3] for f in files if f.endswith(".md")])
+            if mds:
+                categories[cat] = mds
+
+        if not categories:
+            return "笔记库为空，请先处理一些视频或 PDF。"
+
+        total = sum(len(v) for v in categories.values())
+        lines = [f"📚 **笔记库** — {total} 篇，{len(categories)} 个分类\n"]
+        for cat in sorted(categories):
+            files = categories[cat]
+            lines.append(f"\n### {cat} ({len(files)}篇)")
+            for f in files:
+                lines.append(f"  · {f}")
+
+        return "\n".join(lines)
+
+    @staticmethod
+    def _build_stats_report(obs: dict) -> str:
+        kg = obs.get("knowledge_size", {})
+        note_dir = config.note_dir
+        notes = []
+        for root, dirs, files in os.walk(note_dir):
+            for f in files:
+                if f.endswith(".md"):
+                    notes.append(os.path.join(root, f))
+
+        cats = {}
+        for n in notes:
+            cat = os.path.basename(os.path.dirname(n))
+            cats[cat] = cats.get(cat, 0) + 1
+
+        history_count = 0
+        avg_score = 0.0
+        mem = None
+        try:
+            from note_weaver.agents.memory_agent import MemoryAgent
+            mem = MemoryAgent()
+            mem._ensure_loaded()
+            history = mem.profile.get("learning_history", [])
+            if history:
+                history_count = len(history)
+                scores = [h.get("qa_score", 0) for h in history]
+                avg_score = sum(scores) / len(scores)
+        except Exception:
+            pass
+
+        # Rich 仪表盘 Panel + Table
+        dashboard_panel(
+            notes_total=len(notes),
+            concepts=kg.get("concepts", 0),
+            relations=kg.get("relations", 0),
+            history_count=history_count,
+            avg_score=avg_score,
+            categories=cats,
+        )
+
+        # 返回空字符串 — dashboard_panel 已直接打印
+        return ""
 
     def _respond(self, action: dict, result: dict, obs: dict) -> str:
         atype = action["type"]
@@ -323,14 +609,22 @@ class NoteWeaverAgent:
                     f"批量处理完成！共 {d['total']} 个视频，"
                     f"成功 {d['completed']} 个。"
                 )
-            lines = [
-                f"搞定！笔记已生成，QA 评分 {d['qa_score']}",
-                f"笔记: {d['note_path']}",
-            ]
+            note_path = d.get("note_path", "")
+            note_dir = os.path.dirname(note_path) if note_path else ""
             kg = obs.get("knowledge_size", {})
+
+            lines = [
+                f"[OK] 笔记生成完成！QA 评分 {d.get('qa_score', '?')}",
+                "",
+                f"  [FILE] Markdown:  {note_path}",
+            ]
+            # 图谱输出 — 判断是否已有或可生成
+            graph_path = os.path.join(note_dir, "_knowledge_graph.html") if note_dir else ""
             if kg.get("concepts", 0) > 0:
-                lines.append("")
-                lines.append(f"📚 知识库已积累 {kg['concepts']} 个概念。")
+                lines.append(f"  [GRAPH]  知识图谱:  {kg['concepts']} 概念, {kg['relations']} 条关系")
+                lines.append(f"                  weaver graph 查看")
+            # 问答模式
+            lines.append(f"  [QA] 问答模式:  weaver ask \"你的问题\"")
             return "\n".join(lines)
 
         if atype == "search":
@@ -339,34 +633,41 @@ class NoteWeaverAgent:
         if atype == "chat":
             data = result["data"]
             kg = obs.get("knowledge_size", {})
-            if kg.get("concepts", 0) > 0:
-                data += f"\n\n---\n> 💡 知识库已收录 {kg['concepts']} 个半导体工艺概念。"
+            # 追加相关概念推荐
+            related = self.orchestrator.memory.search_concepts(
+                action.get("question", ""), top_k=5
+            ) if hasattr(self.orchestrator, 'memory') else []
+            if related:
+                names = [f"`{c.get('name', c.get('name_en', '?'))}`" for c in related[:5]]
+                data += f"\n\n---\n💡 相关概念: {' · '.join(names)}"
             return data
 
+        if atype == "read_note":
+            return result.get("data", "未找到笔记内容")
+
+        if atype == "list_notes":
+            return result.get("data", "笔记库为空")
+
         if atype == "stats":
-            return self._build_stats_report(obs)
+            return result.get("data", "")
 
         if atype == "guide" and result["data"] == "no_videos":
             return (
                 "请告诉我视频在哪。你可以这样：\n\n"
-                "  处理 E:\\路径\\视频.mp4        # 给文件路径\n"
-                "  处理 E:\\视频文件夹\\          # 给文件夹路径\n"
-                "  帮我处理 E:\\视频\\xxx.mp4     # 自然语言也行\n\n"
+                "  处理 D:\\videos\\demo.mp4         # 给文件路径\n"
+                "  处理 D:\\videos\\                 # 给文件夹路径\n"
+                "  帮我处理 D:\\videos\\xxx.mp4      # 自然语言也行\n\n"
                 "路径带中文就用引号包起来，例如：\n"
-                "  处理 \"E:\\视频\\1.工艺速通\""
+                "  处理 \"D:\\videos\\教程视频.mp4\""
             )
 
         if atype == "proactive_checkin":
             kg = obs.get("knowledge_size", {})
             return (
-                f"好久不见！你已经有 {obs['time_since_last_use']:.0f} 小时没来了。\n\n"
-                f"当前知识库: {kg['concepts']} 个概念, {kg['relations']} 条关联。\n\n"
-                f"我可以帮你:\n"
-                f"- 处理新视频（告诉我文件或文件夹路径）\n"
-                f"- 搜索已有笔记\n"
-                f"- 复习薄弱知识点\n"
-                f"- 回答半导体工艺问题\n\n"
-                f"想做点什么？"
+                f"欢迎回来！\n\n"
+                f"当前知识库 **{kg['concepts']}** 概念 · "
+                f"**{kg['relations']}** 关系。\n\n"
+                f"可以直接问我工艺问题，或拖视频/PDF 给我处理。"
             )
 
         return self._build_idle_response(obs)
@@ -385,38 +686,37 @@ class NoteWeaverAgent:
             cat = os.path.basename(os.path.dirname(n))
             cats[cat] = cats.get(cat, 0) + 1
 
-        lines = [
-            "=" * 40,
-            "  NoteWeaver 学习仪表盘",
-            "=" * 40,
-            f"  笔记总数:   {len(notes)} 篇",
-            f"  知识图谱:   {kg['concepts']} 概念, {kg['relations']} 关系",
-        ]
-
+        history_count = 0
+        avg_score = 0.0
         mem = self.orchestrator.memory
         try:
             mem._ensure_loaded()
             history = mem.profile.get("learning_history", [])
             if history:
+                history_count = len(history)
                 scores = [h.get("qa_score", 0) for h in history]
-                lines.append(f"  Agent处理:  {len(history)} 次, 平均 QA {sum(scores)/len(scores):.1f}")
+                avg_score = sum(scores) / len(scores)
         except Exception:
             pass
 
-        lines.append("")
-        lines.append("  分类分布:")
-        for cat, count in sorted(cats.items()):
-            lines.append(f"    {cat}: {count} 篇")
+        # Rich 仪表盘 Panel + Table
+        dashboard_panel(
+            notes_total=len(notes),
+            concepts=kg.get("concepts", 0),
+            relations=kg.get("relations", 0),
+            history_count=history_count,
+            avg_score=avg_score,
+            categories=cats,
+        )
 
-        lines.append("")
-        lines.append("=" * 40)
-        return "\n".join(lines)
+        # 返回空字符串 — dashboard_panel 已直接打印
+        return ""
 
     def _build_idle_response(self, obs: dict) -> str:
         kg = obs.get("knowledge_size", {})
         return (
-            f"我在。当前知识库 {kg['concepts']} 概念。\n"
-            f"告诉我视频路径（文件或文件夹）我就开始处理。"
+            f"知识库 **{kg['concepts']}** 概念 · "
+            f"**{kg['relations']}** 关系。"
         )
 
 

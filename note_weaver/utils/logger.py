@@ -20,13 +20,9 @@ def setup_logger(name: str = "note_weaver") -> logging.Logger:
     os.makedirs(log_dir, exist_ok=True)
     log_file = os.path.join(log_dir, f"note_weaver_{time.strftime('%Y%m%d')}.log")
 
-    # 文件 handler
+    # 只写文件，不写终端（终端输出由 style.py 的 ok/info/step_done 负责）
     file_handler = logging.FileHandler(log_file, encoding="utf-8")
     file_handler.setLevel(logging.INFO)
-
-    # 控制台 handler
-    console_handler = logging.StreamHandler()
-    console_handler.setLevel(logging.INFO)
 
     # 格式
     fmt = logging.Formatter(
@@ -34,10 +30,8 @@ def setup_logger(name: str = "note_weaver") -> logging.Logger:
         datefmt="%Y-%m-%d %H:%M:%S",
     )
     file_handler.setFormatter(fmt)
-    console_handler.setFormatter(fmt)
 
     logger.addHandler(file_handler)
-    logger.addHandler(console_handler)
 
     return logger
 

@@ -1,4 +1,4 @@
-# Python
+﻿# Python
 __pycache__/
 *.py[cod]
 *.so
@@ -39,10 +39,7 @@ logs/
 *.log
 
 # 数据
-data/Video/
-data/TXT/
-data/Note/
-data/memory_db/
+data/
 Video/
 
 # 数据库
@@ -53,6 +50,8 @@ Video/
 # 系统
 .DS_Store
 Thumbs.db
+
+.claude/
 
 # 文档（不上传）
 架构设计.md

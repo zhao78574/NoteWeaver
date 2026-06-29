@@ -47,7 +47,7 @@ class Config:
     # 🔑 分层 API Key 解析器（核心改动）
     # ================================================================
 
-    def _resolve_api_key(self, env_var: str, yaml_key_path: list) -> str:
+    def _resolve_api_key(self, env_var: str, yaml_key_path: list[str]) -> str:
         """按优先级查找 API Key，匹配所有信号源
 
         Args:
@@ -108,7 +108,7 @@ class Config:
 
     def prompt_api_key(self, env_var: str, display_name: str) -> str:
         """交互式提示用户输入 API Key，支持存入 keychain / 全局配置"""
-        print(f"\n⚠️  未检测到 {env_var}")
+        print(f"\n[WARN] 未检测到 {env_var}")
         val = input(f"请输入你的 {display_name} API Key: ").strip()
         if not val:
             return ""
@@ -119,10 +119,10 @@ class Config:
             try:
                 import keyring
                 keyring.set_password("note_weaver", env_var, val)
-                print(f"  ✅ 已保存到系统钥匙扣")
+                print(f"  [OK] 已保存到系统钥匙扣")
                 return val
             except ImportError:
-                print(f"  ⚠️  keyring 未安装，尝试保存到 ~/.note_weaver/config.json")
+                print(f"  [WARN] keyring 未安装，尝试保存到 ~/.note_weaver/config.json")
                 save = "y"
 
         if save in ("y", "yes"):
@@ -145,9 +145,9 @@ class Config:
 
                 with open(global_cfg, "w", encoding="utf-8") as f:
                     json.dump(gc, f, ensure_ascii=False, indent=2)
-                print(f"  ✅ 已保存到 {global_cfg}")
+                print(f"  [OK] 已保存到 {global_cfg}")
             except Exception as e:
-                print(f"  ⚠️  保存失败: {e}")
+                print(f"  [WARN] 保存失败: {e}")
 
         return val
 
@@ -200,7 +200,7 @@ class Config:
     def model_embed(self) -> str:
         return self._data["api"]["deepseek"].get("model_embed", "deepseek-embedding")
 
-    # ---- API (Qwen Vision) ----
+    # ---- API (Vision: Qwen / GPT-4V) ----
     @property
     def qwen_api_key(self) -> str:
         return self._resolve_api_key("QWEN_API_KEY", ["api", "qwen", "api_key"])
@@ -212,6 +212,16 @@ class Config:
     @property
     def qwen_model_vision(self) -> str:
         return self._data["api"]["qwen"]["model_vision"]
+
+    # ---- API (OpenAI) ----
+    @property
+    def openai_api_key(self) -> str:
+        return self._resolve_api_key("OPENAI_API_KEY", ["api", "openai", "api_key"])
+
+    # ---- API (Anthropic) ----
+    @property
+    def anthropic_api_key(self) -> str:
+        return self._resolve_api_key("ANTHROPIC_API_KEY", ["api", "anthropic", "api_key"])
 
     # ---- Whisper ----
     def whisper_config(self) -> dict:
@@ -245,6 +255,62 @@ class Config:
     def screenshot_default_interval(self) -> int:
         return self._data["screenshot"]["default_interval"]
 
+    # ---- Merge (Playlist) ----
+    @property
+    def merge_enabled(self) -> bool:
+        return self._data.get("merge", {}).get("enabled", True)
+
+    @property
+    def merge_max_total_duration(self) -> int:
+        """合并组累计超过此秒数 → 切分新组合并笔记"""
+        return self._data.get("merge", {}).get("max_merge_total_duration", 1800)
+
+    @property
+    def merge_batch_size(self) -> int:
+        """每批并行下载/处理数量"""
+        return self._data.get("merge", {}).get("batch_size", 5)
+
+    # ---- Router ----
+    @property
+    def router_enabled(self) -> bool:
+        return self._data.get("router", {}).get("enabled", True)
+
+    @property
+    def router_cache_enabled(self) -> bool:
+        return self._data.get("router", {}).get("cache_enabled", True)
+
+    @property
+    def router_cache_ttl_days(self) -> int:
+        return self._data.get("router", {}).get("cache_ttl_days", 7)
+
+    @property
+    def router_visual_density_check(self) -> bool:
+        return self._data.get("router", {}).get("visual_density_check", True)
+
+    # ---- Corrector ----
+    @property
+    def corrector_enabled(self) -> bool:
+        return self._data.get("corrector", {}).get("enabled", True)
+
+    @property
+    def corrector_batch_size(self) -> int:
+        return self._data.get("corrector", {}).get("batch_size", 20)
+
+    @property
+    def corrector_model(self) -> str:
+        """返回 corrector 使用的模型名（fast/pro）"""
+        model_choice = self._data.get("corrector", {}).get("model", "fast")
+        if model_choice == "pro":
+            return self._data["api"]["deepseek"]["model_pro"]
+        return self._data["api"]["deepseek"]["model_fast"]
+
+    # ---- Policy ----
+    def policy_visual_density(self, density: str = "medium") -> dict:
+        """获取指定视觉密度级别的策略配置"""
+        return self._data.get("policy", {}).get("visual_density", {}).get(
+            density, {"frame_interval": 60, "max_images": 25}
+        )
+
     # ---- Vision ----
     @property
     def vision_max_images_per_batch(self) -> int:
@@ -256,11 +322,35 @@ class Config:
 
     # ---- Proxy ----
     def setup_proxy(self):
-        """设置 HTTP 代理环境变量"""
+        """设置或清理 HTTP 代理环境变量
+
+        - enabled=true: 设置 HTTP_PROXY / HTTPS_PROXY
+        - enabled=false: 清除已有的代理环境变量（防止进程污染）
+        """
         p = self._data["proxy"]
         if p.get("enabled", False):
             os.environ["HTTP_PROXY"] = f"http://{p['host']}:{p['port']}"
             os.environ["HTTPS_PROXY"] = f"http://{p['host']}:{p['port']}"
+        else:
+            # 清除可能残留的代理设置（即使本轮未设，前序操作可能污染了进程环境）
+            for var in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
+                os.environ.pop(var, None)
+
+    # ================================================================
+    # 类方法：重新加载配置（用于 --config 参数）
+    # ================================================================
+
+    @classmethod
+    def load(cls, config_path: str):
+        """重新加载配置（支持 --config 参数）
+
+        销毁当前单例并创建一个使用指定配置文件的新实例。
+        用法: Config.load("path/to/custom_config.yaml")
+        """
+        cls._instance = None
+        cls._data = {}
+        cls._instance = cls.__new__(cls)
+        cls._instance._load(config_path)
 
     # ---- 通用访问 ----
     def __getitem__(self, key: str) -> Any:
@@ -270,7 +360,7 @@ class Config:
             val = val[k]
         return val
 
-    def get(self, key: str, default: Any = None) -> Any:
+    def get(self, key: str, default: Any = None) -> Optional[Any]:
         try:
             return self[key]
         except (KeyError, TypeError):
