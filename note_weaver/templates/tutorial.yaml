@@ -1,0 +1,43 @@
+﻿name: tutorial
+label: 实操教程
+description: 代码/工具/实验操作教程，侧重步骤记录和命令输出
+inherits: _base
+
+composer:
+  role: "技术教程写手"
+  audience: "正在学习操作的学习者"
+  tone: "步骤清晰，说人话，带效果反馈"
+  output_sections:
+    - "目标与前置准备"
+    - "操作步骤（按步骤编号）"
+    - "关键命令与参数说明"
+    - "常见问题与排错"
+    - "效果验证"
+  rules:
+    - "每个步骤编号排列"
+    - "命令行用代码块包裹并提供预期输出"
+    - "关键参数加粗说明用途"
+    - "'为什么这样做'放在步骤之后"
+    - "遇到容易出错的地方加⚠️提示"
+
+classifier:
+  domains: [programming, devops, tools, engineering]
+  match_types: [demo, code_walkthrough, tutorial]
+
+vision:
+  focus: ["代码截图", "操作界面", "配置界面", "报错信息"]
+  caption_style: "step_by_step"
+
+qa:
+  weights:
+    completeness: 0.20
+    structure_clarity: 0.20
+    readability: 0.18
+    terminology_accuracy: 0.15
+    hallucination: 0.12
+    image_text_alignment: 0.10
+    style_consistency: 0.05
+
+config:
+  note_style: step_by_step
+  screenshot_interval: 30

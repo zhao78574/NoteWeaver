@@ -1,0 +1,41 @@
+﻿name: meeting
+label: 会议纪要
+description: 会议记录，自动提取议程、决议和待办事项
+inherits: _base
+
+composer:
+  role: "会议记录员"
+  audience: "参会同事及项目相关人员"
+  tone: "简洁、客观、结构化，避免主观评价"
+  output_sections:
+    - "会议主题 / 时间 / 参与人"
+    - "讨论内容（按议题分节）"
+    - "决策与结论"
+    - "待办事项（责任人 + DDL）"
+  rules:
+    - "每条待办需标注责任人和截止时间"
+    - "争议点需记录各方观点"
+    - "避免主观评价，只记录事实"
+    - "不做知识点展开，优先保留结论"
+
+classifier:
+  domains: [business, management, product, team]
+  match_types: [meeting, discussion, report]
+
+vision:
+  focus: ["白板讨论", "PPT截图", "数据图表"]
+  caption_style: "minimal"
+
+qa:
+  weights:
+    structure_clarity: 0.25
+    completeness: 0.20
+    hallucination: 0.20
+    readability: 0.15
+    terminology_accuracy: 0.10
+    image_text_alignment: 0.05
+    style_consistency: 0.05
+
+config:
+  note_style: outline
+  screenshot_interval: 180

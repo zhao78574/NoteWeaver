@@ -1,0 +1,45 @@
+# ============================================================
+# _base.yaml — 基础模板（所有模板继承自此）
+# 提供默认值和通用规则，子模板只需覆写需要变化的字段
+# ============================================================
+name: _base
+label: 基础模板
+description: 所有模板的基类，不建议直接使用
+inherits: null
+
+composer:
+  role: "笔记整理助手"
+  audience: "读者"
+  tone: "自然清晰，重点突出"
+  output_sections:
+    - "概述"
+    - "核心内容"
+    - "总结"
+  rules:
+    - "术语首次出现标注英文缩写"
+    - "核心内容加粗"
+    - "长段落用列表拆分"
+    - "不要自行插入 ![]() markdown 图片语法，用 [图片: 文件名] 占位"
+  language: "zh"
+
+classifier:
+  domains: []
+  note_styles: [detailed, concise, outline, step_by_step]
+
+vision:
+  focus: []
+  caption_style: "brief"
+
+qa:
+  weights:
+    terminology_accuracy: 0.15
+    structure_clarity: 0.15
+    image_text_alignment: 0.15
+    completeness: 0.15
+    hallucination: 0.15
+    readability: 0.13
+    style_consistency: 0.12
+
+config:
+  note_style: detailed
+  screenshot_interval: 60

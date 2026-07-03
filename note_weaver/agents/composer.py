@@ -5,7 +5,8 @@ import re
 from typing import Any, Dict, List, Optional
 from .base import BaseAgent
 from note_weaver.utils.logger import logger
-from note_weaver.utils.prompts import COMPOSER_SYSTEM, build_composer_user_prompt
+from note_weaver.utils.prompts import build_composer_system, build_composer_user_prompt
+from note_weaver.utils.config import config
 
 
 # ── 时间戳对齐工具函数 ───────────────────────────────────────
@@ -164,7 +165,7 @@ class ComposerAgent(BaseAgent):
         # 调用 Gemini 生成笔记
         note_content = self.chat(
             prompt,
-            system_instruction=COMPOSER_SYSTEM,
+            system_instruction=build_composer_system(config.template_name),
         )
 
         # ── 后处理：替换 [图片: path] 占位符 + 修复断裂 markdown ──

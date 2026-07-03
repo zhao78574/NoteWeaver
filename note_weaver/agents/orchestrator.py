@@ -70,12 +70,21 @@ class Orchestrator:
         # 缓存系统
         self.cache = PipelineCache()
 
+        # 模板系统
+        self.template_name = "semiconductor"
+
         # 确保输出目录存在
         for d in [config.txt_dir,
                    config.note_dir, config.memory_dir, config.log_dir]:
             os.makedirs(d, exist_ok=True)
 
         logger.info("[Orchestrator] NoteWeaver 初始化完成")
+
+    def set_template(self, name: str):
+        """切换模板"""
+        self.template_name = name
+        from note_weaver.utils.logger import logger
+        logger.info(f"[Orchestrator] 切换模板: {name}")
 
     # =================================================================
     # 统一入口

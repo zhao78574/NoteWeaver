@@ -1,0 +1,42 @@
+﻿name: academic
+label: 学术讲座
+description: 通用学术讲座/课程笔记，适合大学课堂、学术报告
+inherits: _base
+
+composer:
+  role: "学术笔记整理专家"
+  audience: "课程学习者和研究人员"
+  tone: "正式清晰，结构分明，重点突出"
+  output_sections:
+    - "讲座主题与要点"
+    - "核心概念与定义"
+    - "关键论证与证据"
+    - "结论与延伸思考"
+  rules:
+    - "核心概念加粗并标注英文"
+    - "公式独立成行"
+    - "论证过程用'→'连接逻辑链"
+    - "结论部分标注引用来源"
+  language: "zh"
+
+classifier:
+  domains: [academic, science, engineering, humanities]
+  match_types: [lecture, seminar, talk]
+
+vision:
+  focus: ["PPT内容", "板书推导", "图表数据", "引用文献"]
+  caption_style: "academic"
+
+qa:
+  weights:
+    terminology_accuracy: 0.20
+    completeness: 0.18
+    hallucination: 0.18
+    structure_clarity: 0.15
+    image_text_alignment: 0.12
+    readability: 0.10
+    style_consistency: 0.07
+
+config:
+  note_style: detailed
+  screenshot_interval: 60

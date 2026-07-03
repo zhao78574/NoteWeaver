@@ -213,9 +213,13 @@ class Config:
     def qwen_model_vision(self) -> str:
         return self._data["api"]["qwen"]["model_vision"]
 
-    # ---- API (OpenAI) ----
+    # ---- 模板系统 ----
     @property
-    def openai_api_key(self) -> str:
+    def template_name(self) -> str:
+        """当前使用的模板名"""
+        return self._data.get("template", "semiconductor")
+
+    # ---- API (OpenAI) ----
         return self._resolve_api_key("OPENAI_API_KEY", ["api", "openai", "api_key"])
 
     # ---- API (Anthropic) ----

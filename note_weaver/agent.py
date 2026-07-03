@@ -34,6 +34,7 @@ _INTENT_SYSTEM = """你是一个意图分类器。根据用户的输入，判断
 - search: 用户想搜索知识库中的信息
 - stats: 用户想看统计/概况/进度
 - list: 用户想列出所有笔记
+- switch_template: 用户想切换/查看/管理模板，提到"切换""换""用xx模式""模板""风格""改用""改成""换一种"
 - chat: 以上都不符合，纯聊天/问答
 
 只返回一个单词。"""
@@ -52,6 +53,7 @@ class NoteWeaverAgent:
 
     def __init__(self):
         self.orchestrator = Orchestrator()
+        self.orchestrator.set_template(config.template_name)
         self._conversation_history: list = []
         self._last_check: Optional[datetime] = None
 
@@ -132,7 +134,8 @@ class NoteWeaverAgent:
             intent = resp.choices[0].message.content.strip().lower()
             # 验证合法意图
             valid = {"process_video", "chat", "search", "read_note",
-                     "stats", "summarize", "explain", "compare", "list"}
+                     "stats", "summarize", "explain", "compare", "list",
+                     "switch_template"}
             for v in valid:
                 if v in intent:
                     return v
@@ -141,11 +144,16 @@ class NoteWeaverAgent:
             logger.warning(f"[Agent] LLM 分类失败，走关键词兜底: {e}")
             # ── LLM 不可用时的关键词兜底 ──
             process_kw = ["处理", "转笔记", "跑一下", "视频", ".mp4", ".mkv"]
+            switch_kw = ["切换", "换模板", "换一种", "改用", "改成",
+                         "用会议模式", "用学术", "用通用", "用教程", "用半导体",
+                         "模板", "风格"]
             stats_kw = ["统计", "学了什么", "进度", "报告", "概况"]
             read_kw = ["讲解", "读笔记", "看看", "这篇笔记", "这个笔记",
                        "读一下", "讲一下", "解释一下", "帮我看看"]
             if any(k in t for k in process_kw):
                 return "process_video"
+            if any(k in t for k in switch_kw):
+                return "switch_template"
             if any(k in t for k in stats_kw):
                 return "stats"
             if any(k in t for k in read_kw):
@@ -229,6 +237,10 @@ class NoteWeaverAgent:
 
         elif intent == "list":
             action["type"] = "list_notes"
+
+        elif intent == "switch_template":
+            action["type"] = "switch_template"
+            action["user_input"] = user_input
 
         elif intent == "proactive_checkin":
             action["message"] = "long_time_no_see"
@@ -337,6 +349,9 @@ class NoteWeaverAgent:
         try:
             if atype == "api_warning":
                 result["data"] = "api_missing"
+
+            elif atype == "switch_template":
+                result = self._act_switch_template(action, user_input)
 
             elif atype == "process_video":
                 config.setup_proxy()
@@ -586,6 +601,83 @@ class NoteWeaverAgent:
         # 返回空字符串 — dashboard_panel 已直接打印
         return ""
 
+    # ================================================================
+    # 模板切换 Action
+    # ================================================================
+
+    def _act_switch_template(self, action: dict, user_input: str) -> dict:
+        """自然语言 → 模板切换"""
+        result = {"type": "switch_template", "ok": True, "data": None}
+
+        from note_weaver.utils.prompts import SWITCH_TEMPLATE_SYSTEM
+        from note_weaver.core.template import TemplateEngine
+
+        try:
+            config.setup_proxy()
+            from openai import OpenAI
+            client = OpenAI(
+                api_key=config.deepseek_api_key,
+                base_url=config.deepseek_base_url,
+            )
+            resp = client.chat.completions.create(
+                model=config.model_fast,
+                messages=[{"role": "system", "content": SWITCH_TEMPLATE_SYSTEM},
+                         {"role": "user", "content": user_input}],
+                temperature=0.1,
+                max_tokens=200,
+                response_format={"type": "json_object"},
+            )
+            import json
+            parsed = json.loads(resp.choices[0].message.content)
+            tmpl_action = parsed.get("action", "list")
+            tmpl_name = parsed.get("template", "")
+            reason = parsed.get("reason", "")
+
+            if tmpl_action == "switch" and tmpl_name:
+                # 验证模板存在
+                try:
+                    tmpl = TemplateEngine.load(tmpl_name)
+                    self.orchestrator.set_template(tmpl_name)
+                    result["data"] = {
+                        "action": "switched",
+                        "template": tmpl_name,
+                        "label": tmpl.label,
+                        "message": f"✅ 已切换到「{tmpl.label}」模板\n{reason}",
+                    }
+                except FileNotFoundError:
+                    result["ok"] = False
+                    result["data"] = {
+                        "action": "error",
+                        "message": f"❌ 模板 '{tmpl_name}' 不存在。可用模板：semiconductor, academic, meeting, tutorial, general",
+                    }
+            elif tmpl_action == "list":
+                templates = TemplateEngine.list_all()
+                lines = ["📋 **可用模板：**\n"]
+                current = self.orchestrator.template_name
+                for t in templates:
+                    marker = " ✅ **（当前）**" if t["name"] == current else ""
+                    lines.append(f"- **{t['label']}** (`{t['name']}`){marker}")
+                    lines.append(f"  {t['description']}\n")
+                result["data"] = {
+                    "action": "listed",
+                    "message": "\n".join(lines),
+                }
+            else:
+                result["ok"] = False
+                result["data"] = {
+                    "action": "error",
+                    "message": "无法识别你要切换的模板。可用模板：semiconductor, academic, meeting, tutorial, general",
+                }
+        except Exception as e:
+            logger.warning(f"[Agent] 模板切换失败: {e}")
+            result["ok"] = False
+            result["data"] = {
+                "action": "error",
+                "message": f"❌ 模板切换失败：{e}",
+            }
+
+        return result
+
     def _respond(self, action: dict, result: dict, obs: dict) -> str:
         atype = action["type"]
 
@@ -601,6 +693,12 @@ class NoteWeaverAgent:
                 '  $env:HTTPS_PROXY = "http://127.0.0.1:7890"\n\n'
                 "设置后重新运行 weaver"
             )
+
+        if atype == "switch_template":
+            d = result.get("data", {})
+            if d and "message" in d:
+                return d["message"]
+            return "模板切换失败，请重试"
 
         if atype == "process_video":
             d = result["data"]

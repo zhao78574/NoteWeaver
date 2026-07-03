@@ -36,14 +36,18 @@ from note_weaver.agent import NoteWeaverAgent
 from note_weaver.core.job import Job, Modality, PipelineType
 
 
-def cmd_agent(user_input: str = ""):
+def cmd_agent(user_input: str = "", template_name: str = None):
     agent = NoteWeaverAgent()
+    if template_name:
+        agent.orchestrator.set_template(template_name)
     response = agent.run(user_input)
     print_markdown(response)
 
 
-def cmd_process(video_path: str):
+def cmd_process(video_path: str, template_name: str = None):
     agent = NoteWeaverAgent()
+    if template_name:
+        agent.orchestrator.set_template(template_name)
     status(f"开始处理: [cyan]{video_path}[/cyan]")
     response = agent.run(f"处理视频: {video_path}")
     print_markdown(response)
@@ -1522,6 +1526,8 @@ def main():
     parser.add_argument("message", nargs="?", default="",
                         help="自然语言 或 文件/URL 路径")
     parser.add_argument("--video", help="处理单个视频")
+    parser.add_argument("-t", "--template", default=None,
+                        help="模板: semiconductor, academic, meeting, tutorial, general")
     parser.add_argument("--batch", help="批量处理目录")
     parser.add_argument("--graph", action="store_true", help="知识图谱可视化")
     parser.add_argument("--config", "-c", help="指定配置文件路径")

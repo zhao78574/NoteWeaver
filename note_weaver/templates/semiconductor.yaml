@@ -1,0 +1,54 @@
+﻿# ============================================================
+# semiconductor.yaml — 半导体课堂笔记（当前默认）
+# 继承 _base，覆写 composer / classifier / vision / qa / config
+# ⚠️ 此为系统默认模板，请勿删除
+# ============================================================
+name: semiconductor
+label: 半导体课堂笔记
+description: "面向半导体专业的课堂/讲座笔记，保留技术细节和工艺参数。默认模板，永不删除。"
+inherits: _base
+
+composer:
+  role: "半导体工艺与器件领域专家"
+  audience: "正在学习半导体工艺的学生"
+  tone: "手写感，自然口语化，用🔥和⚠️标注重点"
+  output_sections:
+    - "概述（视频内容摘要）"
+    - "核心内容（按知识点分节，含工艺参数和器件结构）"
+    - "重点总结与易错点"
+  rules:
+    - "术语首次出现标注英文缩写（如'化学气相沉积 CVD'）"
+    - "核心参数和关键流程加粗"
+    - "用🔥标注重点，用⚠️标注易错点"
+    - "每个知识点至少展开2-3句，用三点展开法"
+    - "涉及工艺参数需补充背后的物理原理"
+    - "串联已有知识：'还记得之前讲的X吗？这里用到了同样的原理'"
+    - "纠正谐音错别字；删除'嗯、啊、那个、就是'；保留生动比喻和行业吐槽"
+    - "不要自行插入 ![]() markdown 图片语法，用 [图片: 文件名] 占位"
+  language: "zh"
+
+classifier:
+  domains: [semiconductor, physics, materials, electronics]
+  match_types: [lecture, seminar, talk, demo]
+
+vision:
+  focus:
+    - "器件结构示意图"
+    - "工艺流程图"
+    - "公式推导和能带图"
+    - "参数表格和工艺条件"
+  caption_style: "technical"
+
+qa:
+  weights:
+    terminology_accuracy: 0.20
+    structure_clarity: 0.15
+    image_text_alignment: 0.15
+    completeness: 0.15
+    hallucination: 0.15
+    readability: 0.10
+    style_consistency: 0.10
+
+config:
+  note_style: detailed
+  screenshot_interval: 60

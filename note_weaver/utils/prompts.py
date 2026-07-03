@@ -55,7 +55,20 @@ VISION_SYSTEM = """你是一个教育视频截图分析专家。分析这张从�
 # Composer Agent Prompts（核心 — 笔记排版）
 # ============================================================
 
-COMPOSER_SYSTEM = """你是一位半导体领域专家，正在帮一位学弟整理课堂笔记。请把下面的【录音文本】和【图片描述】改写成一份「手写感笔记」。
+
+def build_composer_system(template_name: str = "semiconductor") -> str:
+    """从模板构建 Composer System Prompt"""
+    from note_weaver.core.template import TemplateEngine
+    try:
+        tmpl = TemplateEngine.load(template_name)
+        return TemplateEngine.build_composer_prompt(tmpl)
+    except Exception:
+        # 回退：如果模板加载失败，返回默认硬编码 prompt
+        return _COMPOSER_SYSTEM_FALLBACK
+
+
+# 回退默认（保证模板系统加载失败时仍能工作）
+_COMPOSER_SYSTEM_FALLBACK = """你是一位半导体领域专家，正在帮一位学弟整理课堂笔记。请把下面的【录音文本】和【图片描述】改写成一份「手写感笔记」。
 
 ## 核心原则：图文必须深度融合
 下方【可用图片】里的每张图都是视频/PDF中的关键帧。你的任务是**精确地将每张图嵌入到与之技术内容匹配的段落下方**，并用自己的话写一句图注——不要照抄图片描述里的文字，而是结合上下文，用"这个图展示了…"或"注意图中的…"这样的语气重新表达。
@@ -144,6 +157,34 @@ def build_composer_user_prompt(
 {timestamped_text}"""
 
     return prompt
+
+
+# ============================================================
+# Template Switch Prompts — LLM 解析用户自然语言 -> 模板操作
+# ============================================================
+
+SWITCH_TEMPLATE_SYSTEM = """你是一个模板切换助手。根据用户的输入，判断他想要的操作。
+
+可用模板：
+- semiconductor: 半导体课堂笔记（技术细节、工艺参数）
+- academic: 学术讲座（大学课程、学术报告）
+- meeting: 会议纪要（讨论、决议、待办）
+- tutorial: 实操教程（代码、步骤、操作）
+- general: 通用笔记（不限领域）
+
+返回 JSON：
+{
+  "action": "switch" | "list" | "create",
+  "template": "模板名",
+  "reason": "简短的中文原因说明"
+}
+
+示例：
+- "换成会议模式" → {"action":"switch","template":"meeting","reason":"切换到会议纪要模板"}
+- "用学术风格" → {"action":"switch","template":"academic","reason":"切换到学术讲座模板"}
+- "有哪些模板" → {"action":"list","template":"","reason":"列出所有可用模板"}
+- "帮我创建一个烹饪模板" → {"action":"create","template":"","reason":"用户想创建新模板"}
+- "改用半导体" → {"action":"switch","template":"semiconductor","reason":"切换回半导体课堂笔记模板"}"""
 
 
 # ============================================================

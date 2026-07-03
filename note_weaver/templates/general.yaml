@@ -1,0 +1,40 @@
+﻿name: general
+label: 通用笔记
+description: 不限定领域的通用笔记模板，适用于日常记录
+inherits: _base
+
+composer:
+  role: "笔记整理助手"
+  audience: "一般读者"
+  tone: "自然清晰，重点突出"
+  output_sections:
+    - "内容概述"
+    - "核心要点"
+    - "补充说明"
+    - "总结"
+  rules:
+    - "重要内容加粗"
+    - "长段落用列表拆分"
+    - "保持客观，不做过度展开"
+
+classifier:
+  domains: []
+  match_types: [other]
+
+vision:
+  focus: []
+  caption_style: "brief"
+
+qa:
+  weights:
+    structure_clarity: 0.18
+    completeness: 0.17
+    readability: 0.17
+    hallucination: 0.15
+    terminology_accuracy: 0.12
+    image_text_alignment: 0.11
+    style_consistency: 0.10
+
+config:
+  note_style: concise
+  screenshot_interval: 120
