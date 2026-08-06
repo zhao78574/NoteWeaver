@@ -1,7 +1,6 @@
 """任务状态机 — 追踪每个视频处理任务的生命周期"""
 
 import enum
-import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime

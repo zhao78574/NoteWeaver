@@ -170,7 +170,6 @@ class AnthropicProvider(LLMProvider):
     def chat(self, messages: List[Dict], **kwargs) -> str:
         if not self._available:
             raise RuntimeError("anthropic 包未安装")
-        import anthropic
         system = None
         real_messages = []
         for m in messages:
@@ -191,7 +190,7 @@ class AnthropicProvider(LLMProvider):
                         system_instruction: Optional[str] = None) -> str:
         if not self._available:
             raise RuntimeError("anthropic 包未安装")
-        import anthropic, base64, os
+        import base64, os
         with open(image_path, "rb") as f:
             img_data = base64.b64encode(f.read()).decode("utf-8")
         ext = os.path.splitext(image_path)[1].lower()

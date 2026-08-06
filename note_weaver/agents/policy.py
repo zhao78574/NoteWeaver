@@ -11,7 +11,7 @@ Policy 与 Router 分离的好处：
   - 可以按用户等级 / 成本预算切换不同 Policy
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 
 # ── 视觉密度 → 截图参数 ─────────────────────────────────────

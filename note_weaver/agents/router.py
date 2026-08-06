@@ -23,7 +23,7 @@ import hashlib
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Optional
 
 from .base import BaseAgent
 from note_weaver.utils.logger import logger

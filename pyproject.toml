@@ -35,6 +35,10 @@ dependencies = [
     "rich>=13.0.0",
 
     "gradio>=4.0.0",
+
+    # 检索
+    "rank_bm25>=0.2.0",
+    "sentence-transformers>=3.0.0",
 ]
 
 [project.urls]

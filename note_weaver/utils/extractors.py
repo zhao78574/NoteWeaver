@@ -12,12 +12,10 @@
     print(result["title"], len(result["text"]))
 """
 
-import os
 import re
-import io
 import hashlib
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import Dict, Any, Optional
 from urllib.parse import urlparse
 
 from note_weaver.utils.logger import logger

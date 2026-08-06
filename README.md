@@ -217,22 +217,22 @@ NoteWeaver 依赖两个 API：
 支持 4 种方式，按优先级自动查找：
 
 ```bash
-# 方式一：环境变量（临时）
+# 方式一：系统钥匙串（推荐 🔒 — API Key 不落盘）
+pip install keyring
+keyring set note_weaver DEEPSEEK_API_KEY
+keyring set note_weaver QWEN_API_KEY
+
+# 方式二：环境变量（适合 CI/容器）
 export DEEPSEEK_API_KEY="sk-xxx"
 export QWEN_API_KEY="sk-xxx"
 
-# 方式二：.env 文件（推荐）
+# 方式三：.env 文件（开发环境备选）
 cp .env.example .env
 # 编辑 .env 填入你的 Key
 
-# 方式三：全局配置文件
+# 方式四：全局配置文件（不推荐 — Key 明文存储在磁盘）
 # 创建 ~/.note_weaver/config.json 并写入：
 # {"api": {"deepseek": {"api_key": "sk-xxx"}, "qwen": {"api_key": "sk-xxx"}}}
-
-# 方式四：系统钥匙串（需 keyring 库）
-# pip install keyring
-# keyring set note_weaver DEEPSEEK_API_KEY
-# keyring set note_weaver QWEN_API_KEY
 ```
 
 ### 网络代理（可选）

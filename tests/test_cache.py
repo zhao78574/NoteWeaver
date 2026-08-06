@@ -32,7 +32,6 @@ class TestPipelineCache:
         assert cache.get("/test/video.mp4", "transcribe") == "audio_data"
         assert cache.get("/test/video.mp4", "vision") == "image_data"
 
-    @pytest.mark.xfail(reason="_is_expired 未传递 params，params 缓存暂不可用")
     def test_cache_key_differs_by_params(self, cache):
         cache.set("/test/video.mp4", "transcribe", "small", {"model": "small"})
         cache.set("/test/video.mp4", "transcribe", "large", {"model": "large"})
@@ -44,7 +43,6 @@ class TestPipelineCache:
         cache.invalidate("/test/video.mp4", "transcribe")
         assert cache.get("/test/video.mp4", "transcribe") is None
 
-    @pytest.mark.xfail(reason="_input_pattern 和 _key 计算方式不同，暂不能正确清除")
     def test_invalidate_all(self, cache):
         cache.set("/test/video.mp4", "transcribe", "data")
         cache.set("/test/video.mp4", "vision", "data")

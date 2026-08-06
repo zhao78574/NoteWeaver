@@ -2,7 +2,7 @@
 
 import os
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 from .base import BaseAgent
 from note_weaver.utils.logger import logger
 from note_weaver.utils.prompts import build_composer_system, build_composer_user_prompt
@@ -162,7 +162,7 @@ class ComposerAgent(BaseAgent):
                 f"{prompt}"
             )
 
-        # 调用 Gemini 生成笔记
+        # 调用 DeepSeek 生成笔记
         note_content = self.chat(
             prompt,
             system_instruction=build_composer_system(config.template_name),
@@ -181,6 +181,67 @@ class ComposerAgent(BaseAgent):
         note_content = note_content.strip()
 
         logger.info(f"[Composer] 完成: {len(note_content)} 字符")
+        return note_content
+
+    def stream_execute(
+        self,
+        file_base: str,
+        timestamped_text: str,
+        vision_results: List[Dict[str, Any]],
+        on_token: Optional[Callable[[str], None]] = None,
+        strategy: Optional[Dict[str, Any]] = None,
+        user_context: str = "",
+        revision_feedback: str = "",
+        defects: Optional[List[Dict]] = None,
+        segments: Optional[List[Dict[str, Any]]] = None,
+    ) -> str:
+        """流式版 execute — 逐 token 回调 on_token，后处理完成后返回完整文本"""
+        strategy = strategy or {}
+        note_style = strategy.get("note_style", "detailed")
+        focus_areas = ", ".join(strategy.get("focus_areas", []))
+
+        image_descriptions = self._format_vision_results(
+            vision_results, file_base, segments=segments)
+
+        logger.info(
+            f"[Composer] 流式排版: {file_base} "
+            f"({len(vision_results)} 图, style={note_style})"
+        )
+
+        prompt = build_composer_user_prompt(
+            file_base=file_base,
+            timestamped_text=timestamped_text,
+            image_descriptions=image_descriptions,
+            user_context=user_context,
+            focus_areas=focus_areas,
+            note_style=note_style,
+        )
+
+        if revision_feedback:
+            prompt = (
+                f"【修改要求】上次的笔记有以下问题，请针对性修改：\n"
+                f"{revision_feedback}\n\n---\n\n"
+                f"{prompt}"
+            )
+
+        # 流式调用 LLM
+        note_content = self.stream_chat(
+            prompt,
+            system_instruction=build_composer_system(config.template_name),
+            on_token=on_token,
+        )
+
+        # ── 后处理（与 execute 相同，需要完整文本） ──
+        note_content, placeholder_count = _replace_placeholders(
+            note_content, file_base, vision_results)
+        if placeholder_count:
+            logger.info(f"[Composer] 图片占位符替换: {placeholder_count} 张")
+        note_content = _fix_broken_markdown_images(note_content)
+        note_content = re.sub(r'\n---\s*\n', '\n\n', note_content)
+        note_content = re.sub(r'^---\s*\n', '', note_content, flags=re.MULTILINE)
+        note_content = note_content.strip()
+
+        logger.info(f"[Composer] 流式完成: {len(note_content)} 字符")
         return note_content
 
     def _format_vision_results(
@@ -247,13 +308,17 @@ class ComposerAgent(BaseAgent):
         file_base: str,
         content: str,
         note_dir: str,
+        header_format: Optional[str] = None,
+        footer_format: Optional[str] = None,
     ) -> str:
-        """保存笔记为 Markdown 文件，带精美 header/footer
+        """保存笔记为 Markdown 文件，支持模板自定义 header/footer
 
         Args:
             file_base: 文件名（不含扩展名）
             content: 笔记内容
             note_dir: 笔记输出目录
+            header_format: 可选，header 格式模板（{file_base} 和 {first_line} 为占位符）
+            footer_format: 可选，footer 格式模板
 
         Returns:
             保存的 MD 文件路径
@@ -265,12 +330,12 @@ class ComposerAgent(BaseAgent):
         first_line = lines[0].replace("#", "").strip() if lines else "核心笔记"
         rest = "\n".join(lines[1:]).strip() if len(lines) > 1 else ""
 
-        # 组装完整 Markdown
-        header = (
-            f'# <center><font face="仿宋" color=orange>{file_base}</font></center>\n'
-            f'# <font face="微软雅黑"><center>{first_line}</center>\n\n'
-        )
-        footer = "\n\n</font>\n"
+        # 组装完整 Markdown（可通过模板自定义 header/footer）
+        if header_format:
+            header = header_format.format(file_base=file_base, first_line=first_line)
+        else:
+            header = f'# {file_base}\n\n## {first_line}\n\n'
+        footer = footer_format or ""
         full = header + rest + footer
 
         md_path = os.path.join(note_dir, f"{file_base}.md")

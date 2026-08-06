@@ -2,7 +2,7 @@
 
 import os
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict
 from .base import BaseAgent
 from note_weaver.utils.logger import logger
 from note_weaver.utils.config import config
@@ -12,7 +12,7 @@ class TranscriberAgent(BaseAgent):
     """faster-whisper 语音识别 Agent"""
 
     def __init__(self):
-        super().__init__()  # 不需要 Gemini 模型，但继承 base 的能力
+        super().__init__()  # Whisper Agent 不需要额外模型初始化，继承 base 即可
         self._whisper_model = None
         self._whisper_loaded = False
 

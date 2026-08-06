@@ -1,5 +1,7 @@
 """视觉理解 Agent — 使用 Qwen Vision API 分析截图
 
+继承 BaseAgent（provider="qwen"），共享 client、_encode_image、_clean_json 等能力。
+
 质量控制流水线：
   1. 质量过滤（模糊/过暗/过小/纯色）
   2. 相邻帧相似度去重
@@ -11,19 +13,18 @@
 import json
 import os
 import time
-from typing import Any, Dict, List, Optional
-
-from openai import OpenAI
+from typing import Any, Dict, List
 
 from note_weaver.utils.logger import logger
 from note_weaver.utils.config import config
 from note_weaver.utils.prompts import VISION_SYSTEM
-from note_weaver.agents.base import BaseAgent as _BA
+from note_weaver.agents.base import BaseAgent
 
 
-class VisionAgent:
+class VisionAgent(BaseAgent):
     """Qwen Vision API — 智能截图分析（含质量过滤 + 去重 + 优先排序）
 
+    继承 BaseAgent(provider="qwen")，自动使用 Qwen API 凭证。
     自动模型故障转移：当当前模型的免费额度耗尽时，
     自动切换到下一个备用模型（每个模型有独立 100 万免费额度）。
     """
@@ -41,7 +42,8 @@ class VisionAgent:
     ]
 
     def __init__(self, max_images: int = 10):
-        self._client: Optional[OpenAI] = None
+        # 继承 BaseAgent(provider="qwen") → 自动使用 Qwen API 凭证
+        super().__init__(provider="qwen")
         self.max_images = (
             config.get("vision.max_images_per_batch")   # config.yaml 优先
             if config.get("vision.max_images_per_batch") is not None
@@ -54,15 +56,6 @@ class VisionAgent:
         self._active_model = config.qwen_model_vision
         # 已尝试过的备用模型（避免循环重试）
         self._tried_models: set = set()
-
-    @property
-    def client(self) -> OpenAI:
-        if self._client is None:
-            self._client = OpenAI(
-                api_key=config.qwen_api_key,
-                base_url=config.qwen_base_url,
-            )
-        return self._client
 
     def _is_quota_error(self, e: Exception) -> bool:
         """判断异常是否为配额耗尽错误"""
@@ -186,10 +179,10 @@ class VisionAgent:
             logger.info(f"[Vision] [{i+1}/{len(screenshot_files)}] {img_name}")
 
             try:
-                data_url = _BA._encode_image(img_path)
+                data_url = self._encode_image(img_path)
 
                 raw = self._call_vision_with_failover(data_url)
-                parsed = json.loads(_BA._clean_json(raw))
+                parsed = json.loads(self._clean_json(raw))
                 parsed["image_id"] = img_name
                 parsed["image_path"] = img_path
                 if "should_include" not in parsed:

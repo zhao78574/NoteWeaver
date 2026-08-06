@@ -25,7 +25,7 @@ import json
 import pickle
 import shutil
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Optional
 
 from note_weaver.utils.logger import logger
 
@@ -76,9 +76,9 @@ class PipelineCache:
             return None
 
         # 检查 TTL
-        if self._is_expired(input_path, stage):
+        if self._is_expired(input_path, stage, params):
             logger.debug(f"[Cache] ⏭ {stage}: 已过期，跳过")
-            self.invalidate(input_path, stage)
+            self.invalidate(input_path, stage, params)
             return None
 
         try:
@@ -94,7 +94,7 @@ class PipelineCache:
             return data
         except (pickle.PickleError, EOFError, OSError) as e:
             logger.warning("[Cache] [WARN] 读取失败 (stage={}): {}，清除".format(stage, e))
-            self.invalidate(input_path, stage)
+            self.invalidate(input_path, stage, params)
             return None
 
     def set(self, input_path: str, stage: str, data: Any, params: dict = None):
@@ -128,25 +128,38 @@ class PipelineCache:
         except (pickle.PickleError, OSError) as e:
             logger.warning(f"[Cache] [WARN] 写入失败 (stage={stage}): {e}")
 
-    def invalidate(self, input_path: str, stage: str = None):
+    def invalidate(self, input_path: str, stage: str = None, params: dict = None):
         """删除缓存
 
         Args:
             input_path: 输入文件路径
             stage: 指定阶段（None = 清除该 input 的所有缓存）
+            params: 可选的配置参数（仅当指定 stage 时使用）
         """
         if stage:
-            # 删除特定 stage
-            cache_path = self._cache_path(input_path, stage)
+            # 删除特定 stage（params 影响缓存键定位）
+            cache_path = self._cache_path(input_path, stage, params)
             if cache_path.exists():
                 shutil.rmtree(str(cache_path), ignore_errors=True)
                 logger.debug(f"[Cache] [DEL] INVALIDATE {stage}")
         else:
-            # 删除该 input 的所有缓存
-            pattern = self._input_pattern(input_path)
-            for d in self.cache_dir.glob(f"{pattern}*"):
-                shutil.rmtree(str(d), ignore_errors=True)
-            logger.info(f"[Cache] [DEL] INVALIDATE ALL for {Path(input_path).name}")
+            # 删除该 input 的所有缓存（遍历所有 key 目录，按 meta.input_path 匹配）
+            keys_to_remove = []
+            for key_dir in self.cache_dir.iterdir():
+                if not key_dir.is_dir():
+                    continue
+                # 检查任意 stage 的 meta.json 是否匹配 input_path
+                for stage_dir in key_dir.iterdir():
+                    if not stage_dir.is_dir():
+                        continue
+                    meta = self._read_meta(stage_dir)
+                    if meta and meta.get("input_path") == input_path:
+                        keys_to_remove.append(key_dir)
+                        break  # 同一个 key_dir 只需匹配一次
+            for key_dir in keys_to_remove:
+                shutil.rmtree(str(key_dir), ignore_errors=True)
+            if keys_to_remove:
+                logger.info(f"[Cache] [DEL] INVALIDATE ALL for {Path(input_path).name} ({len(keys_to_remove)} keys)")
 
     def clear_all(self, layer: str = None):
         """清空全部/指定层缓存
@@ -219,11 +232,6 @@ class PipelineCache:
         key = self._key(input_path, params)
         return self.cache_dir / key / stage
 
-    def _input_pattern(self, input_path: str) -> str:
-        """生成 glob 匹配模式"""
-        raw = input_path + "::"
-        return hashlib.sha256(raw.encode()).hexdigest()[:16]
-
     def _key(self, input_path: str, params: dict = None) -> str:
         """生成缓存键
 
@@ -244,10 +252,10 @@ class PipelineCache:
                 return layer_name
         return "unknown"
 
-    def _is_expired(self, input_path: str, stage: str) -> bool:
+    def _is_expired(self, input_path: str, stage: str, params: dict = None) -> bool:
         """检查缓存是否过期"""
         import time
-        cache_path = self._cache_path(input_path, stage)
+        cache_path = self._cache_path(input_path, stage, params)
         meta = self._read_meta(cache_path)
         if not meta:
             return True

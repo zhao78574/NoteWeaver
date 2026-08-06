@@ -21,6 +21,9 @@ composer:
     - "长段落用列表拆分"
     - "不要自行插入 ![]() markdown 图片语法，用 [图片: 文件名] 占位"
   language: "zh"
+  # 笔记 header/footer 格式（{file_base} 和 {first_line} 为占位符）
+  note_header: "# {file_base}\n\n## {first_line}\n\n"
+  note_footer: ""
 
 classifier:
   domains: []

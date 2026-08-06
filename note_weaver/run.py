@@ -16,10 +16,10 @@ if sys.stdout.encoding != 'utf-8':
     sys.stdout.reconfigure(encoding='utf-8')
 
 from note_weaver.utils.style import (
-    console, ok, err, warn, info, status, file_path, graph_stats, qa_hint,
-    step_done, step_running, step_pending, section, command_prompt,
-    print_markdown, print_separator, dashboard_panel, result_panel,
-    note_complete_panel, create_progress,
+    console, ok, err, warn, info, status, file_path,
+    step_done, section, command_prompt,
+    print_markdown,
+    note_complete_panel,
 )
 
 __version__ = "1.0.0"
@@ -40,8 +40,19 @@ def cmd_agent(user_input: str = "", template_name: str = None):
     agent = NoteWeaverAgent()
     if template_name:
         agent.orchestrator.set_template(template_name)
-    response = agent.run(user_input)
-    print_markdown(response)
+
+    # 流式输出 — 答案已逐 token 打印
+    from note_weaver.utils.style import StreamDisplay, print_response, print_source_footer
+    display = StreamDisplay()
+    response = agent.run(user_input, progress_callback=display.make_callbacks())
+    display.stop()
+
+    if display.did_stream:
+        # 流式已打印正文，额外显示高亮来源列表
+        print_source_footer(response)
+    else:
+        # 流式没触发时（如处理极快），用高亮版打印
+        print_response(response)
 
 
 def cmd_process(video_path: str, template_name: str = None):
@@ -49,19 +60,46 @@ def cmd_process(video_path: str, template_name: str = None):
     if template_name:
         agent.orchestrator.set_template(template_name)
     status(f"开始处理: [cyan]{video_path}[/cyan]")
-    response = agent.run(f"处理视频: {video_path}")
+
+    # ── 流式输出（相位状态 + compose token） ──
+    from note_weaver.utils.style import StreamDisplay
+    display = StreamDisplay()
+    response = agent.run(
+        f"处理视频: {video_path}",
+        progress_callback=display.make_callbacks(),
+    )
+    display.stop()
+
+    # response 是摘要（QA评分/文件路径等），不是已流式输出的笔记内容
     print_markdown(response)
     _regenerate_graph()
     _rebuild_embedding_index()
 
 
+
+
 def _extract_page_from_filename(image_id: str) -> int:
-    """从 image_id 中解析页码（e.g. paper_p3_0_hash.jpg → 3）"""
+    """从图片文件名中提取用于排序的页码/时间戳
+
+    支持格式：
+      - video_0037s.jpg → 37（视频截图，取秒数）
+      - page_3_image_2.png → 3（PDF 页）
+      - abc_123_def.png → 123（通用：第一个数字段）
+    """
     import re as _re
-    m = _re.search(r'_p(\d+)_', image_id)
-    return int(m.group(1)) if m else 999
-
-
+    # 视频截图: _0037s → 37
+    m = _re.search(r'_(\d+)s\.(?:jpg|png)$', image_id)
+    if m:
+        return int(m.group(1))
+    # PDF: page_3 → 3
+    m = _re.search(r'page[_\s](\d+)', image_id, _re.IGNORECASE)
+    if m:
+        return int(m.group(1))
+    # 通用：第一个出现的数字
+    m = _re.search(r'(\d+)', image_id)
+    if m:
+        return int(m.group(1))
+    return 0
 
 
 def _extract_hash_from_filename(image_id: str) -> str:
@@ -139,6 +177,7 @@ def insert_images_by_content(note_text, vision_results, file_base):
     # ── 逐图匹配 ────────────────────────────────────────────
     section_image_count = {}
     matched_count = 0
+
     for img in images:
         img_id = img.get("image_id", "unknown.jpg")
         desc = img.get("content_description", "")
@@ -150,18 +189,42 @@ def insert_images_by_content(note_text, vision_results, file_base):
         trace_source = "{}/{}".format(file_base, img_id)
         if img.get("timestamp"):
             trace_source += " @ {}".format(img["timestamp"])
+        ts = img.get("timestamp_seconds")
+        if ts is not None:
+            m, s = divmod(int(ts), 60)
+            trace_source += " @ [{:02d}:{:02d}]".format(m, s)
         trace_comment = "\n<!-- frame: {} -->\n".format(trace_source)
         img_ref = trace_comment + img_ref
 
-        keyword_source = desc + ' ' + ' '.join(key_terms) + ' ' + img_id
-        img_words = _extract_keywords(keyword_source)
-
         best_idx, best_score = -1, 0
-        for i, sec in enumerate(sections):
-            sec_words = _extract_keywords(sec[:300].lower())
-            score = len(img_words & sec_words)
-            if score > best_score:
-                best_score, best_idx = score, i
+
+        # 优先策略：用时间戳对齐的转录段落关键词匹配章节
+        seg = img.get("matched_segment", {})
+        seg_text = seg.get("text", "").strip()
+        if seg_text:
+            seg_words = _extract_keywords(seg_text)
+            for i, sec in enumerate(sections):
+                sec_words = _extract_keywords(sec[:500].lower())
+                score = len(seg_words & sec_words)
+                # 对已有多张图的章节降权，避免扎堆
+                existing = section_image_count.get(i, 0)
+                if existing > 0:
+                    score = score / (existing + 1)
+                if score > best_score:
+                    best_score, best_idx = score, i
+
+        # 后备策略：关键词匹配（仅当时间戳对齐未命中时）
+        if best_idx < 0:
+            keyword_source = desc + ' ' + ' '.join(key_terms) + ' ' + img_id
+            img_words = _extract_keywords(keyword_source)
+            for i, sec in enumerate(sections):
+                sec_words = _extract_keywords(sec[:300].lower())
+                score = len(img_words & sec_words)
+                existing = section_image_count.get(i, 0)
+                if existing > 0:
+                    score = score / (existing + 1)
+                if score > best_score:
+                    best_score, best_idx = score, i
 
         if best_idx >= 0 and best_score > 0:
             matched_count += 1
@@ -434,19 +497,24 @@ def cmd_graph():
 
 
 def _regenerate_graph():
-    script = pathlib.Path(__file__).resolve().parent.parent / "scripts" / "weaver_graph.py"
+    """从模板复制图谱 HTML 并嵌入 JSON 数据（动态+备用双模式）"""
+    template = pathlib.Path(__file__).resolve().parent / "templates" / "knowledge_graph.html"
     memory_db = pathlib.Path(config.memory_dir)
-    memory_db.mkdir(parents=True, exist_ok=True)
     output_path = memory_db / "knowledge_graph.html"
-    if script.exists():
-        import subprocess as _sp
-        try:
-            _sp.run([sys.executable, str(script), "--output", str(output_path)],
-                     capture_output=True, timeout=30)
-        except _sp.TimeoutExpired:
-            warn("图谱生成超时")
-        except Exception as _e:
-            warn("图谱生成异常: {}".format(_e))
+    kg_path = memory_db / "knowledge_graph.json"
+    if not template.exists():
+        warn("图谱模板文件不存在: {}".format(template))
+        return
+    try:
+        memory_db.mkdir(parents=True, exist_ok=True)
+        html = template.read_text(encoding="utf-8")
+        if kg_path.exists():
+            kg_data = kg_path.read_text(encoding="utf-8")
+            html = html.replace("__FALLBACK_DATA_PLACEHOLDER__", kg_data)
+        output_path.write_text(html, encoding="utf-8")
+        ok("图谱 HTML 已就绪: {}".format(output_path))
+    except Exception as _e:
+        warn("图谱模板复制失败: {}".format(_e))
 
 
 def _rebuild_embedding_index():
@@ -457,6 +525,12 @@ def _rebuild_embedding_index():
             logger.info("[Embedding] 索引重建完成: {} 条".format(count))
     except Exception as e:
         logger.warning("[Embedding] 索引重建失败（非致命）: {}".format(e))
+    # 同步刷新 chat RAG 检索实例，下次问答使用新索引
+    try:
+        from note_weaver.skills.chat import invalidate_retrieval_cache
+        invalidate_retrieval_cache()
+    except Exception:
+        pass
 
 
 def cmd_from_url(url):
@@ -684,7 +758,7 @@ def cmd_merge_playlist(url: str):
         console.print()
         status(f"[第{i}批/{len(groups)}] {group_title} ({len(group_videos)}集)")
 
-        result = orchestrator._run_merge_from_videos(
+        result = orchestrator.merge_service.merge_from_videos(
             group_title, group_videos,
             original_url=url, selected_indices=group_indices,
         )
@@ -1008,6 +1082,9 @@ def _has_read_intent(text: str) -> bool:
 def _agent_read_note(text: str):
     """用 Agent 讲解笔记（不走管线）"""
     import re as _re
+    from note_weaver.utils.style import (
+        StreamDisplay, print_response, print_source_footer,
+    )
     # 先从输入中提取 .md 路径
     m = _re.search(r'([A-Za-z]:[\\/][^\s,;)\]}"\'"]+\.md)', text)
     if m:
@@ -1015,16 +1092,26 @@ def _agent_read_note(text: str):
         if os.path.isfile(md_path):
             from note_weaver.agent import NoteWeaverAgent
             agent = NoteWeaverAgent()
-            response = agent._read_and_explain_note(md_path, text)
-            from note_weaver.utils.style import print_markdown
-            print_markdown(response)
+            display = StreamDisplay()
+            callbacks = display.make_callbacks()
+            on_token = callbacks.get("on_token")
+            response = agent._read_and_explain_note(md_path, text, on_token=on_token)
+            display.stop()
+            if display.did_stream:
+                print_source_footer(response)
+            else:
+                print_response(response)
             return
     # 兜底
     from note_weaver.agent import NoteWeaverAgent
     agent = NoteWeaverAgent()
-    response = agent.run(text)
-    from note_weaver.utils.style import print_markdown
-    print_markdown(response)
+    display = StreamDisplay()
+    response = agent.run(text, progress_callback=display.make_callbacks())
+    display.stop()
+    if display.did_stream:
+        print_source_footer(response)
+    else:
+        print_response(response)
 
 
 def _clean_knowledge_graph(source_note: str):
@@ -1382,15 +1469,27 @@ def _dispatch_job(job: Job):
         _run_with_cancel("知识图谱", cmd_graph)
         return
     if cmd == "stats":
+        from note_weaver.utils.style import StreamDisplay, print_markdown
         agent = NoteWeaverAgent()
-        print_markdown(agent.run("学习统计"))
+        display = StreamDisplay()
+        response = agent.run("学习统计", progress_callback=display.make_callbacks())
+        display.stop()
+        if not display.did_stream:
+            print_markdown(response)
         return
 
-    # ── 问答 ──
+    # ── 问答（全面流式+高亮来源） ──
     if job.pipeline == PipelineType.QA_ONLY:
+        from note_weaver.utils.style import StreamDisplay, print_response, print_source_footer
         agent = NoteWeaverAgent()
         console.print()
-        print_markdown(agent.run(job.input))
+        display = StreamDisplay()
+        response = agent.run(job.input, progress_callback=display.make_callbacks())
+        display.stop()
+        if display.did_stream:
+            print_source_footer(response)
+        else:
+            print_response(response)
         return
 
     # ── 管线任务 ──
@@ -1444,7 +1543,6 @@ def _dispatch_job(job: Job):
 
 def _run_with_cancel(description: str, fn, *args, **kwargs):
     """执行一个可能长时间运行的操作，支持 Ctrl+C 取消"""
-    import time as _time
     console.print(f"  [bold blue]●[/bold blue] {description}...  [dim](Ctrl+C 取消)[/dim]")
     try:
         fn(*args, **kwargs)
@@ -1475,11 +1573,16 @@ def cmd_interactive():
         notes=note_count,
     )
 
-    # 首次进入的简短问候 — 不再刷 Panel，直接显示对话
-    initial = agent.run("")
-    if initial.strip():
+    # 首次进入的简短问候
+    from note_weaver.utils.style import StreamDisplay, print_response, print_source_footer
+    display = StreamDisplay()
+    initial = agent.run("", progress_callback=display.make_callbacks())
+    display.stop()
+    if display.did_stream:
+        print_source_footer(initial)
+    elif initial.strip():
         console.print()
-        print_markdown(initial)
+        print_response(initial)
 
     console.print()
 

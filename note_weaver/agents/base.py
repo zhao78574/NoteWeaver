@@ -1,30 +1,63 @@
-"""Agent 基类 — DeepSeek API (OpenAI 兼容) 统一调用、重试、日志"""
+"""Agent 基类 — 多 provider 支持 (DeepSeek / Qwen)，统一调用、重试、日志"""
+
+from __future__ import annotations
 
 import time
-import json
 import base64
 import os
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
 from note_weaver.utils.logger import logger
 from note_weaver.utils.config import config
 
+if TYPE_CHECKING:
+    from openai import OpenAI
+
+
+# ── Provider → API 凭证映射 ────────────────────────────────────
+
+_PROVIDER_CREDENTIALS = {
+    "deepseek": {
+        "api_key_attr": "deepseek_api_key",
+        "base_url_attr": "deepseek_base_url",
+    },
+    "qwen": {
+        "api_key_attr": "qwen_api_key",
+        "base_url_attr": "qwen_base_url",
+    },
+}
+
 
 class BaseAgent(ABC):
-    """所有 Agent 的抽象基类，封装 DeepSeek API (OpenAI 兼容协议)"""
+    """所有 Agent 的抽象基类，支持多 LLM provider
 
-    def __init__(self, model_name: Optional[str] = None):
-        self.model_name = model_name or config.model_fast
+    provider 参数：
+      - "deepseek"（默认）：使用 DeepSeek API，凭证来自 config.deepseek_api_key
+      - "qwen"：使用 Qwen / 阿里云百炼 API，凭证来自 config.qwen_api_key
+
+    子类只需传 provider 即可获得对应的 client、chat、stream_chat、
+    _encode_image、_clean_json 等通用能力。
+    """
+
+    def __init__(self, model_name: Optional[str] = None, provider: str = "deepseek"):
+        self.provider = provider
+        if model_name is not None:
+            self.model_name = model_name
+        elif provider == "qwen":
+            self.model_name = config.qwen_model_vision
+        else:
+            self.model_name = config.model_fast
         self._client: Optional[Any] = None
 
     @property
-    def client(self) -> "OpenAI":
-        """懒加载 OpenAI 客户端（指向 DeepSeek）"""
+    def client(self) -> OpenAI:
+        """懒加载 OpenAI 客户端（根据 provider 自动选择凭证）"""
         if self._client is None:
             from openai import OpenAI
+            creds = _PROVIDER_CREDENTIALS.get(self.provider, _PROVIDER_CREDENTIALS["deepseek"])
             self._client = OpenAI(
-                api_key=config.deepseek_api_key,
-                base_url=config.deepseek_base_url,
+                api_key=getattr(config, creds["api_key_attr"]),
+                base_url=getattr(config, creds["base_url_attr"]),
             )
         return self._client
 
@@ -68,6 +101,56 @@ class BaseAgent(ABC):
                 else:
                     raise RuntimeError(
                         f"[{self.__class__.__name__}] API 全部重试失败: {e}"
+                    ) from e
+
+    def stream_chat(
+        self,
+        prompt: str,
+        system_instruction: Optional[str] = None,
+        on_token: Optional[Callable[[str], None]] = None,
+        max_retries: int = 3,
+        temperature: float = 0.7,
+    ) -> str:
+        """流式调用 LLM，逐 token 回调 on_token
+
+        Returns:
+            完整的响应文本（与 chat() 相同）
+        """
+        messages = self._build_messages(prompt, system_instruction)
+
+        for attempt in range(1, max_retries + 1):
+            try:
+                kwargs = dict(
+                    model=self.model_name,
+                    messages=messages,
+                    temperature=temperature,
+                    stream=True,
+                )
+                if self.model_name == "deepseek-reasoner":
+                    kwargs.pop("temperature", None)
+
+                collected: list[str] = []
+                response = self.client.chat.completions.create(**kwargs)
+                for chunk in response:
+                    delta = chunk.choices[0].delta if chunk.choices else None
+                    if delta and delta.content:
+                        collected.append(delta.content)
+                        if on_token:
+                            on_token(delta.content)
+
+                full_text = "".join(collected)
+                return full_text
+
+            except Exception as e:
+                logger.warning(
+                    f"[{self.__class__.__name__}] DeepSeek stream API err "
+                    f"(attempt {attempt}/{max_retries}): {e}"
+                )
+                if attempt < max_retries:
+                    time.sleep(3 * attempt)
+                else:
+                    raise RuntimeError(
+                        f"[{self.__class__.__name__}] Stream API 全部重试失败: {e}"
                     ) from e
 
     def chat_with_image(

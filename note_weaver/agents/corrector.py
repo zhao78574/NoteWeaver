@@ -12,7 +12,6 @@
 """
 
 import json
-import re
 from typing import Any, Dict, List, Optional
 
 from .base import BaseAgent

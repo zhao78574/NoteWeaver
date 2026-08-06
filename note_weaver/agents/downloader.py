@@ -193,6 +193,7 @@ class VideoDownloader:
             raise ValueError(f"不支持的链接: {url}")
 
         ydl_opts = {**self._base_opts(source), "noplaylist": True}
+        import yt_dlp
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
         return info
@@ -338,7 +339,6 @@ class VideoDownloader:
 
                 if not os.path.isfile(local_path):
                     # 可能扩展名不同，找匹配文件
-                    import glob
                     candidates = list(
                         self._download_root.glob(f"{source}/{idx:03d}_{fid}.*")
                     )
@@ -449,6 +449,7 @@ class VideoDownloader:
         start = time.time()
 
         try:
+            import yt_dlp
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ydl.download([url])
         except Exception as e:
@@ -539,7 +540,7 @@ class VideoDownloader:
 
     @staticmethod
     def _sanitize_title(title: str, video_id: str, max_len: int = 55) -> str:
-        """将视频标题转为简短明了的文件名
+        r"""将视频标题转为简短明了的文件名
 
         规则:
             - 移除 Windows 非法文件名字符 (\ / : * ? " < > |)

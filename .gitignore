@@ -33,6 +33,7 @@ venv/
 config.local.yaml
 config.private.yaml
 secrets.yaml
+note_weaver/config.yaml
 
 # 日志
 logs/

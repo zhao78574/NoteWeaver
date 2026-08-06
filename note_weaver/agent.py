@@ -10,13 +10,13 @@
     agent.run("")  # 自主模式：扫描环境，主动建议
 """
 
-import os, sys, json, time, threading, re, pathlib
-from datetime import datetime, timedelta
-from typing import Optional
+import os, json, re, pathlib
+from datetime import datetime
+from typing import Optional, Callable, Dict
 
 from note_weaver.utils.config import config
 from note_weaver.utils.logger import logger
-from note_weaver.utils.style import dashboard_panel, console
+from note_weaver.utils.style import dashboard_panel
 from note_weaver.agents.orchestrator import Orchestrator
 from note_weaver.skills.search import search as search_notes
 from note_weaver.skills.chat import chat as chat_notes
@@ -56,13 +56,23 @@ class NoteWeaverAgent:
         self.orchestrator.set_template(config.template_name)
         self._conversation_history: list = []
         self._last_check: Optional[datetime] = None
+        self._progress_callback: Optional[Dict[str, Callable]] = None
 
     # ================================================================
     # 公开入口
     # ================================================================
 
-    def run(self, user_input: str = "") -> str:
-        """Agent 主入口。用户说话 → Agent 响应。"""
+    def run(self, user_input: str = "", progress_callback: Optional[Dict[str, Callable]] = None) -> str:
+        """Agent 主入口。用户说话 → Agent 响应。
+
+        Args:
+            user_input: 用户输入
+            progress_callback: 可选，流式输出回调 {"on_phase": fn, "on_token": fn, ...}
+        """
+        if progress_callback:
+            self._progress_callback = progress_callback
+            self.orchestrator.set_progress_callback(progress_callback)
+
         observations = self._perceive(user_input)
         action = self._decide(user_input, observations)
         result = self._act(action, user_input, observations)
@@ -98,25 +108,77 @@ class NoteWeaverAgent:
             "qwen": bool(config.qwen_api_key),
         }
 
+    # ── 意图关键词映射（优先于 LLM，节省 API 调用 + 延迟） ──
+    _INTENT_EXACT = {
+        "/quit": "quit", "/exit": "quit", "quit": "quit", "exit": "quit", "退出": "quit",
+        "/stop": "stop", "/pause": "stop", "stop": "stop", "pause": "stop",
+        "/stats": "stats", "stats": "stats",
+        "/graph": "graph", "graph": "graph",
+        "/list": "list", "list": "list",
+    }
+
+    # 按优先级排列的模糊关键词：更高的优先级更先匹配
+    # 注意：未被任何规则匹配的输入默认走 LLM 兜底 → chat，
+    # 所以只放"确定不是 chat"的关键词即可
+    _INTENT_KEYWORDS = [
+        ("process_video", ["处理视频", "转成笔记", "处理 ", "跑一下", "转笔记",
+                           ".mp4", ".mkv", ".avi", ".flac", ".m4a",
+                           ".mp3", ".mov", ".webm"]),
+        ("switch_template", ["切换", "换模板", "换一种", "改用", "改成",
+                             "用会议模式", "用学术", "用通用", "用教程", "用半导体",
+                             "模板", "风格"]),
+        ("read_note", ["讲解", "读笔记", "这篇笔记", "这个笔记",
+                       "读一下", "讲一下"]),
+        ("stats", ["统计", "学了什么", "进度", "报告", "概况"]),
+        ("search", ["搜索", "查找", "检索", "找一下"]),
+        ("list", ["列出", "所有笔记", "笔记列表", "全部笔记"]),
+    ]
+
+    # 以下关键词/模式直接归为 chat，不需要 LLM 分类
+    # — 包含问号的中英文问题
+    # — 以"什么/怎么/为什么/如何/能不能/可以"开头的问题
+    # — 常见闲聊模式
+    _CHAT_PATTERNS = [
+        "？", "?",
+        "什么", "怎么", "为什么", "如何", "能不能", "可以",
+        "区别", "是什么", "是什么意思", "介绍一下",
+        "帮忙", "帮我", "请问",
+        "你好", "谢谢", "hello", "hi ",
+    ]
+
     def _classify_intent(self, text: str) -> str:
-        """用 LLM 理解用户意图，替代关键词匹配"""
+        """关键词优先 → chat 模式匹配 → LLM 兜底
+
+        三层分类策略：
+        1. 精确命令 + 功能关键词匹配（0ms）
+        2. chat 模式匹配：问号/疑问词/闲聊词 → 直接归 chat（0ms）
+        3. LLM 兜底：仅当输入完全无法判断时才调 API（~1-3s）
+        """
         if not text or not text.strip():
             return "autonomous"
 
         t = text.strip().lower()
+        t_original = text.strip()
 
-        # ── 特殊命令（不走 LLM） ──
-        if t in ("/quit", "/exit", "quit", "exit", "退出"):
-            return "quit"
-        if t in ("/stop", "/pause", "stop", "pause"):
-            return "stop"
+        # ── 1) 精确命令匹配（0ms，无 API 调用） ──
+        if t in self._INTENT_EXACT:
+            return self._INTENT_EXACT[t]
 
-        # ── 快速关键词兜底 ──
-        if any(kw in t for kw in
-               ("处理视频", "转成笔记", "处理 ", ".mp4", ".mkv", ".avi")):
-            return "process_video"
+        # ── 2) 模糊关键词匹配（<1ms） ──
+        for intent, keywords in self._INTENT_KEYWORDS:
+            if any(kw in t or kw in t_original for kw in keywords):
+                return intent
 
-        # ── 用 LLM 理解意图 ──
+        # ── 3) chat 模式匹配（<1ms） ──
+        # 含问号、疑问词、闲聊词的输入直接归为 chat，跳过 LLM
+        if any(p in t or p in t_original for p in self._CHAT_PATTERNS):
+            return "chat"
+
+        # ── 4) 输入较短（<20字）且不是路径/命令 → 大概率是聊天 ──
+        if len(t_original) < 20 and not any(c in t for c in "/\\.:"):
+            return "chat"
+
+        # ── 5) LLM 兜底（仅模糊长输入时调用） ──
         try:
             config.setup_proxy()
             from openai import OpenAI
@@ -132,7 +194,6 @@ class NoteWeaverAgent:
                 max_tokens=50,
             )
             intent = resp.choices[0].message.content.strip().lower()
-            # 验证合法意图
             valid = {"process_video", "chat", "search", "read_note",
                      "stats", "summarize", "explain", "compare", "list",
                      "switch_template"}
@@ -141,23 +202,7 @@ class NoteWeaverAgent:
                     return v
             return "chat"
         except Exception as e:
-            logger.warning(f"[Agent] LLM 分类失败，走关键词兜底: {e}")
-            # ── LLM 不可用时的关键词兜底 ──
-            process_kw = ["处理", "转笔记", "跑一下", "视频", ".mp4", ".mkv"]
-            switch_kw = ["切换", "换模板", "换一种", "改用", "改成",
-                         "用会议模式", "用学术", "用通用", "用教程", "用半导体",
-                         "模板", "风格"]
-            stats_kw = ["统计", "学了什么", "进度", "报告", "概况"]
-            read_kw = ["讲解", "读笔记", "看看", "这篇笔记", "这个笔记",
-                       "读一下", "讲一下", "解释一下", "帮我看看"]
-            if any(k in t for k in process_kw):
-                return "process_video"
-            if any(k in t for k in switch_kw):
-                return "switch_template"
-            if any(k in t for k in stats_kw):
-                return "stats"
-            if any(k in t for k in read_kw):
-                return "read_note"
+            logger.warning(f"[Agent] LLM 分类失败，兜底为 chat: {e}")
             return "chat"
 
     def _get_knowledge_stats(self) -> dict:
@@ -398,13 +443,20 @@ class NoteWeaverAgent:
 
             elif atype == "chat":
                 config.setup_proxy()
-                result["data"] = chat_notes(action["question"])
+                on_token = (self._progress_callback or {}).get("on_token")
+                if on_token:
+                    from note_weaver.skills.chat import stream_chat
+                    result["data"] = stream_chat(action["question"], on_token=on_token)
+                else:
+                    result["data"] = chat_notes(action["question"])
 
             elif atype == "read_note":
                 config.setup_proxy()
                 note_ref = action.get("note_ref", "")
                 question = action.get("question", "")
-                result["data"] = self._read_and_explain_note(note_ref, question)
+                on_token = (self._progress_callback or {}).get("on_token")
+                result["data"] = self._read_and_explain_note(
+                    note_ref, question, on_token=on_token)
 
             elif atype == "list_notes":
                 result["data"] = self._list_all_notes()
@@ -431,7 +483,8 @@ class NoteWeaverAgent:
 
     def _learn(self, action: dict, result: dict, user_input: str):
         if not result["ok"]:
-            pass
+            logger.debug(f"[Agent] _learn 跳过（action 失败）: {result.get('error', 'unknown')}")
+            return
         profile_path = os.path.join(config.memory_dir, "user_profile.json")
         try:
             profile = {}
@@ -448,8 +501,13 @@ class NoteWeaverAgent:
     # 5. 响应 (Respond)
     # ================================================================
 
-    def _read_and_explain_note(self, note_ref: str, question: str) -> str:
-        """读取并讲解笔记"""
+    def _read_and_explain_note(
+        self,
+        note_ref: str,
+        question: str,
+        on_token: Optional[Callable[[str], None]] = None,
+    ) -> str:
+        """读取并讲解笔记（支持流式）"""
         import pathlib as _pl
 
         # 1) 先尝试直接作为路径
@@ -457,17 +515,14 @@ class NoteWeaverAgent:
         if _pl.Path(note_ref).exists() and note_ref.endswith(".md"):
             note_path = note_ref
         elif _pl.Path(note_ref).exists():
-            # 可能是目录，找目录下的 .md
             p = _pl.Path(note_ref)
             if p.is_dir():
                 mds = sorted(p.glob("*.md"))
                 if mds:
                     note_path = str(mds[0])
         else:
-            # 2) 在笔记目录中模糊搜索
             note_dir = _pl.Path(config.note_dir)
             if note_dir.exists():
-                # 去掉路径元素，取最后一段作为关键词
                 keywords = note_ref.replace(".md", "").replace("\\", "/").split("/")[-1]
                 for root, dirs, files in os.walk(str(note_dir)):
                     for f in files:
@@ -481,7 +536,6 @@ class NoteWeaverAgent:
                         break
 
         if not note_path or not os.path.isfile(note_path):
-            # 搜索结果提示
             note_dir = config.note_dir
             matches = []
             if note_dir:
@@ -499,7 +553,7 @@ class NoteWeaverAgent:
         with open(note_path, "r", encoding="utf-8") as f:
             content = f.read()
 
-        # 4) 用 LLM 讲解
+        # 4) 用 LLM 讲解（支持流式）
         from openai import OpenAI
         client = OpenAI(
             api_key=config.deepseek_api_key,
@@ -515,19 +569,38 @@ class NoteWeaverAgent:
 5. 如果用户没提具体问题，就先概括笔记核心内容，再逐段讲解
 6. 保持自然对话语气，不要AI八股"""
 
-        resp = client.chat.completions.create(
-            model=config.model_fast,
-            messages=[
-                {"role": "system", "content": _EXPLAIN_SYSTEM},
-                {"role": "user", "content": (
-                    f"## 笔记文件\n{os.path.basename(note_path)}\n\n"
-                    f"## 笔记内容\n{content[:12000]}\n\n"
-                    f"## 用户问题\n{question if question and '讲解' not in question else '请帮我讲解这篇笔记'}"
-                )},
-            ],
-            temperature=0.5,
-        )
-        return resp.choices[0].message.content or "（无响应）"
+        messages = [
+            {"role": "system", "content": _EXPLAIN_SYSTEM},
+            {"role": "user", "content": (
+                f"## 笔记文件\n{os.path.basename(note_path)}\n\n"
+                f"## 笔记内容\n{content[:12000]}\n\n"
+                f"## 用户问题\n{question if question and '讲解' not in question else '请帮我讲解这篇笔记'}"
+            )},
+        ]
+
+        if on_token:
+            # 流式版
+            resp = client.chat.completions.create(
+                model=config.model_fast,
+                messages=messages,
+                temperature=0.5,
+                stream=True,
+            )
+            collected: list[str] = []
+            for chunk in resp:
+                delta = chunk.choices[0].delta if chunk.choices else None
+                if delta and delta.content:
+                    collected.append(delta.content)
+                    on_token(delta.content)
+            return "".join(collected) or "（无响应）"
+        else:
+            # 同步版（原逻辑）
+            resp = client.chat.completions.create(
+                model=config.model_fast,
+                messages=messages,
+                temperature=0.5,
+            )
+            return resp.choices[0].message.content or "（无响应）"
 
     @staticmethod
     def _list_all_notes() -> str:

@@ -2,8 +2,7 @@
 
 import os
 import json
-import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 from datetime import datetime
 from .base import BaseAgent
 from note_weaver.utils.logger import logger
@@ -25,6 +24,10 @@ EDGE_TYPES = [
     "part_of",         # A 是 B 的组成部分
     "example_of",      # A 是 B 的一个实例
 ]
+
+# 概念数量上限：超过后按 last_seen 淘汰最旧的概念
+# 200 篇笔记约 200-500 个概念，设 1000 留足余量
+MAX_CONCEPTS = 1000
 
 
 class MemoryAgent(BaseAgent):
@@ -259,12 +262,15 @@ class MemoryAgent(BaseAgent):
             return []
 
     def _merge_concepts(self, new_concepts: List[Dict], source_note: str):
-        """合并新概念到知识图谱（去重 + 类型化关联 + 兼容旧数据）
+        """合并新概念到知识图谱（去重 + 类型化关联 + 兼容旧数据 + 上限淘汰）
 
         支持两种关系格式：
         - 新格式: relations=[{"target": "...", "type": "supports"}, ...]
         - 旧格式: related_to=["概念1", "概念2"] → 自动升级为 "related" 类型
+
+        概念数量超过 MAX_CONCEPTS 时，按 last_seen 淘汰最旧的概念。
         """
+        now = datetime.now().isoformat()
         existing = {c["name"]: c for c in self.knowledge_graph["concepts"]}
 
         for nc in new_concepts:
@@ -273,7 +279,8 @@ class MemoryAgent(BaseAgent):
                 continue
 
             if name in existing:
-                # 已有概念：追加来源
+                # 已有概念：更新 last_seen + 追加来源
+                existing[name]["last_seen"] = now
                 sources = existing[name].setdefault("source_notes", [])
                 if source_note not in sources:
                     sources.append(source_note)
@@ -284,10 +291,29 @@ class MemoryAgent(BaseAgent):
                     existing_rels, new_rels)
             else:
                 nc["source_notes"] = [source_note]
-                nc["first_seen"] = datetime.now().isoformat()
+                nc["first_seen"] = now
+                nc["last_seen"] = now
                 nc.setdefault("relations", [])
                 nc.setdefault("related_to", [])
                 self.knowledge_graph["concepts"].append(nc)
+
+        # ── 概念上限淘汰：超过 MAX_CONCEPTS 时按 last_seen 清理 ──
+        concepts = self.knowledge_graph["concepts"]
+        if len(concepts) > MAX_CONCEPTS:
+            # 按 last_seen 升序（最旧的在前）
+            concepts.sort(key=lambda c: c.get("last_seen", c.get("first_seen", "")))
+            evicted = concepts[:len(concepts) - MAX_CONCEPTS]
+            self.knowledge_graph["concepts"] = concepts[len(concepts) - MAX_CONCEPTS:]
+            # 清理被淘汰概念的关系边
+            evicted_names = {c["name"] for c in evicted}
+            self.knowledge_graph["relations"] = [
+                r for r in self.knowledge_graph["relations"]
+                if r["from"] not in evicted_names and r["to"] not in evicted_names
+            ]
+            logger.info(
+                f"[Memory] 概念淘汰: {len(evicted)} 个（总数 {len(concepts)} > {MAX_CONCEPTS}），"
+                f"关系边同步清理"
+            )
 
         # 从 relations 字段构建图边（新格式优先）
         all_new_relations = []  # [(from, to, type), ...]

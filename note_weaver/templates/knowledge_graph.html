@@ -1,0 +1,1177 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="h-full">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NoteWeaver 知识图谱星系版</title>
+    <!-- 引入 Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 引入 D3.js 物理引擎 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+    <!-- 引入 FontAwesome 字体图标 -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Google Fonts Inter & Source Han Sans -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <style>
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            overflow: hidden;
+        }
+        /* 霓虹发光节点动画与模糊过滤 */
+        .node-glow-blue { filter: drop-shadow(0 0 6px rgba(59, 130, 246, 0.65)); }
+        .node-glow-green { filter: drop-shadow(0 0 6px rgba(16, 185, 129, 0.65)); }
+        .node-glow-orange { filter: drop-shadow(0 0 6px rgba(245, 158, 11, 0.65)); }
+        .node-glow-red { filter: drop-shadow(0 0 6px rgba(239, 68, 68, 0.65)); }
+        .node-glow-purple { filter: drop-shadow(0 0 6px rgba(139, 92, 246, 0.65)); }
+        .node-glow-gray { filter: drop-shadow(0 0 4px rgba(148, 163, 184, 0.4)); }
+
+        /* 隐藏滚动条 */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        .dark ::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.15);
+            border-radius: 999px;
+        }
+        .light ::-webkit-scrollbar-thumb {
+            background: rgba(0, 0, 0, 0.15);
+            border-radius: 999px;
+        }
+        
+        /* 连线流畅转换过渡 */
+        .link-transition {
+            transition: stroke-opacity 0.25s ease, stroke-width 0.25s ease;
+        }
+        .node-transition {
+            transition: r 0.2s ease, fill 0.2s ease;
+        }
+    </style>
+    <script>
+        // 配置 Tailwind 主题定制
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        brand: {
+                            50: '#f5f3ff',
+                            500: '#8b5cf6',
+                            600: '#7c3aed',
+                        },
+                        panelDark: '#0b0f19',
+                        bgDark: '#05070c'
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+<body class="dark h-full bg-bgDark text-slate-200 transition-colors duration-300">
+
+    <div class="absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(15,23,42,0.3)_0%,rgba(5,7,12,0.95)_100%)] pointer-events-none z-0"></div>
+
+    <!-- 主布局容器 -->
+    <div class="relative w-full h-full flex flex-col z-10 select-none">
+        
+        <header class="w-full flex-none h-16 border-b border-white/5 dark:border-white/5 light:border-black/5 bg-panelDark/60 backdrop-blur-md px-6 flex items-center justify-between z-20">
+            <div class="flex items-center space-x-3">
+                <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 p-0.5 flex items-center justify-center shadow-lg shadow-purple-500/20">
+                    <div class="w-full h-full bg-bgDark rounded-[10px] flex items-center justify-center">
+                        <i class="fa-solid fa-circle-nodes text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-pink-400 text-lg"></i>
+                    </div>
+                </div>
+                <div>
+                    <h1 class="font-bold text-base tracking-wider text-white">NoteWeaver</h1>
+                    <p class="text-[10px] text-slate-400">概念 & 关联科学星系</p>
+                </div>
+            </div>
+
+            <!-- 顶部核心数据指示看板 (参考 image_797b84.jpg 的“530 概念 · 1020 关系”) -->
+            <div class="hidden md:flex items-center space-x-4 bg-white/5 dark:bg-white/5 light:bg-black/5 px-4 py-1.5 rounded-full border border-white/10">
+                <span class="flex items-center text-xs text-slate-300 space-x-1.5">
+                    <span class="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></span>
+                    <strong id="statNodeCount">538</strong> <span class="text-slate-400">总节点 (概念)</span>
+                </span>
+                <span class="text-slate-600">|</span>
+                <span class="flex items-center text-xs text-slate-300 space-x-1.5">
+                    <span class="w-2 h-2 rounded-full bg-purple-500"></span>
+                    <strong id="statLinkCount">2527</strong> <span class="text-slate-400">科学连接 (关系)</span>
+                </span>
+            </div>
+
+            <!-- 顶部中置立体式快速检索输入框 (参考原图搜索栏) -->
+            <div class="relative w-72 md:w-96">
+                <span class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                    <i class="fa-solid fa-magnifying-glass text-xs text-slate-400"></i>
+                </span>
+                <input 
+                    type="text" 
+                    id="globalSearchInput" 
+                    placeholder="检索概念、材料、设备、工艺..." 
+                    class="w-full bg-white/5 hover:bg-white/10 focus:bg-white/10 border border-white/10 hover:border-white/20 focus:border-purple-500 text-xs rounded-lg py-2 pl-9 pr-4 text-slate-100 placeholder-slate-400 focus:outline-none transition-all duration-300 shadow-inner"
+                />
+                <!-- 搜索自动补全下拉框 -->
+                <div id="searchDropdown" class="absolute left-0 right-0 mt-2 max-h-60 overflow-y-auto bg-slate-900/95 border border-white/10 rounded-lg shadow-xl hidden z-50 backdrop-blur-md"></div>
+            </div>
+
+            <!-- 顶部控制动作按钮 -->
+            <div class="flex items-center space-x-3">
+                <!-- 暗黑/明亮主题切换 -->
+                <button id="themeToggleBtn" class="w-9 h-9 flex items-center justify-center rounded-lg bg-white/5 border border-white/10 text-slate-300 hover:text-white hover:bg-white/10 transition-all" title="切换明暗色彩主题">
+                    <i class="fa-solid fa-moon"></i>
+                </button>
+                <button id="resetViewBtn" class="w-9 h-9 flex items-center justify-center rounded-lg bg-white/5 border border-white/10 text-slate-300 hover:text-white hover:bg-white/10 transition-all" title="复位视角居中">
+                    <i class="fa-solid fa-compress"></i>
+                </button>
+            </div>
+        </header>
+
+        <!-- 主内容区：左侧边控制+中部图谱+右侧边详情 -->
+        <div class="flex-1 w-full flex overflow-hidden relative">
+            
+            <aside class="absolute md:relative left-4 top-4 bottom-4 md:left-0 md:top-0 md:bottom-0 z-20 w-72 flex-none flex flex-col p-4 space-y-4 pointer-events-none md:pointer-events-auto">
+                
+                <!-- 图例选择过滤卡片 -->
+                <div class="bg-panelDark/80 border border-white/5 rounded-xl p-4 shadow-xl backdrop-blur-md pointer-events-auto flex flex-col space-y-3">
+                    <div class="flex items-center justify-between border-b border-white/10 pb-2">
+                        <span class="text-xs font-semibold text-slate-300 tracking-wider">星系节点分类 (交互图例)</span>
+                        <i class="fa-solid fa-filter text-slate-500 text-[10px]"></i>
+                    </div>
+                    <div class="space-y-2 text-xs" id="legendContainer">
+                        <!-- 由 JS 填充，支持点击高亮某类、过滤等 -->
+                    </div>
+                    <p class="text-[10px] text-slate-500 pt-1 border-t border-white/5">💡 点击图例可单独高亮某一分类</p>
+                </div>
+
+                <!-- 物理引擎/星系渲染调节面板 -->
+                <div class="bg-panelDark/80 border border-white/5 rounded-xl p-4 shadow-xl backdrop-blur-md pointer-events-auto flex flex-col space-y-3">
+                    <div class="flex items-center justify-between border-b border-white/10 pb-2">
+                        <span class="text-xs font-semibold text-slate-300 tracking-wider">星系引力参数调节</span>
+                        <i class="fa-solid fa-sliders text-slate-500 text-[10px]"></i>
+                    </div>
+                    <!-- 布局预设 -->
+                    <div class="space-y-1.5">
+                        <label class="text-[11px] text-slate-400">空间布局模式</label>
+                        <div class="grid grid-cols-3 gap-1">
+                            <button id="layoutForce" class="px-2 py-1 bg-purple-600 border border-purple-500 rounded text-[10px] text-white font-medium hover:bg-purple-700 transition">力导向</button>
+                            <button id="layoutCircular" class="px-2 py-1 bg-white/5 border border-white/10 rounded text-[10px] text-slate-300 hover:bg-white/10 transition">星轨道</button>
+                            <button id="layoutCluster" class="px-2 py-1 bg-white/5 border border-white/10 rounded text-[10px] text-slate-300 hover:bg-white/10 transition">聚类网</button>
+                        </div>
+                    </div>
+                    <!-- 引力范围 -->
+                    <div class="space-y-1">
+                        <div class="flex justify-between text-[11px] text-slate-400">
+                            <span>排斥电荷力</span>
+                            <span id="chargeVal">-80</span>
+                        </div>
+                        <input type="range" id="chargeSlider" min="-200" max="-10" value="-80" class="w-full accent-purple-500 h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer">
+                    </div>
+                    <!-- 连线紧密度 -->
+                    <div class="space-y-1">
+                        <div class="flex justify-between text-[11px] text-slate-400">
+                            <span>恒星轨道距离</span>
+                            <span id="linkDistVal">45px</span>
+                        </div>
+                        <input type="range" id="linkDistSlider" min="20" max="150" value="45" class="w-full accent-purple-500 h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer">
+                    </div>
+                    <!-- 控制动作按钮 -->
+                    <div class="pt-2 flex justify-between">
+                        <button id="pauseSimulationBtn" class="flex-1 mr-1 py-1 px-2 border border-white/10 bg-white/5 hover:bg-white/10 text-[10px] text-slate-300 rounded flex items-center justify-center space-x-1 transition">
+                            <i class="fa-solid fa-pause"></i>
+                            <span id="pauseBtnText">冻结星体</span>
+                        </button>
+                        <button id="sparkRandomBtn" class="flex-1 ml-1 py-1 px-2 border border-purple-500/20 bg-purple-500/10 hover:bg-purple-500/20 text-[10px] text-purple-300 rounded flex items-center justify-center space-x-1 transition">
+                            <i class="fa-solid fa-wand-magic-sparkles"></i>
+                            <span>激活微扰</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 交互提示说明面板 -->
+                <div class="hidden md:flex bg-panelDark/80 border border-white/5 rounded-xl p-4 shadow-xl backdrop-blur-md pointer-events-auto flex-col space-y-2">
+                    <span class="text-xs font-semibold text-slate-300 tracking-wider border-b border-white/10 pb-2 flex items-center justify-between">
+                        <span>星际导航指南</span>
+                        <i class="fa-solid fa-circle-question text-slate-500"></i>
+                    </span>
+                    <ul class="text-[11px] text-slate-400 space-y-1.5 leading-relaxed">
+                        <li class="flex items-start space-x-1">
+                            <span class="text-purple-500 mt-0.5">•</span>
+                            <span><strong>单指/滚轮：</strong> 支持缩放和任意平移拖拽</span>
+                        </li>
+                        <li class="flex items-start space-x-1">
+                            <span class="text-purple-500 mt-0.5">•</span>
+                            <span><strong>点选星体：</strong> 可展开右侧多维属性脉络</span>
+                        </li>
+                        <li class="flex items-start space-x-1">
+                            <span class="text-purple-500 mt-0.5">•</span>
+                            <span><strong>星体拖拽：</strong> 锁定该实体空间位置</span>
+                        </li>
+                    </ul>
+                </div>
+            </aside>
+
+            <main class="flex-1 relative h-full">
+                <div class="absolute inset-0 z-0 overflow-hidden" id="graphContainer">
+                    <svg id="networkSvg" class="w-full h-full cursor-grab active:cursor-grabbing"></svg>
+                </div>
+                <!-- 加载状态指示 -->
+                <div id="loadingStatus" class="absolute inset-0 z-40 flex flex-col items-center justify-center bg-bgDark/80 text-slate-300 text-sm transition-opacity duration-500 pointer-events-none">
+                    <div class="w-10 h-10 rounded-full border-2 border-purple-500 border-t-transparent animate-spin mb-4"></div>
+                    <span>正在加载知识星系数据...</span>
+                </div>
+
+                <!-- 悬浮在图谱中心的搜索结果为空提示 -->
+                <div id="noResultToast" class="absolute top-4 left-1/2 transform -translate-x-1/2 bg-red-500/90 text-white text-xs px-4 py-2 rounded-full shadow-lg border border-red-400/20 hidden transition-all duration-300 z-30">
+                    <i class="fa-solid fa-triangle-exclamation mr-1"></i> 未检索到该星体，请尝试其他关键词
+                </div>
+
+                <!-- 悬浮在右上角的图谱操作小浮窗 -->
+                <div class="absolute bottom-6 right-6 z-20 flex flex-col space-y-2">
+                    <button id="zoomInBtn" class="w-10 h-10 rounded-xl bg-panelDark/90 border border-white/10 text-slate-300 hover:text-white flex items-center justify-center shadow-lg transition active:scale-95" title="放大">
+                        <i class="fa-solid fa-plus text-sm"></i>
+                    </button>
+                    <button id="zoomOutBtn" class="w-10 h-10 rounded-xl bg-panelDark/90 border border-white/10 text-slate-300 hover:text-white flex items-center justify-center shadow-lg transition active:scale-95" title="缩小">
+                        <i class="fa-solid fa-minus text-sm"></i>
+                    </button>
+                    <button id="downloadPngBtn" class="w-10 h-10 rounded-xl bg-panelDark/90 border border-white/10 text-slate-300 hover:text-white flex items-center justify-center shadow-lg transition active:scale-95" title="导出全景 SVG 文件">
+                        <i class="fa-solid fa-download text-sm"></i>
+                    </button>
+                </div>
+            </main>
+
+            <aside id="nodeDetailSidebar" class="absolute md:relative right-4 top-4 bottom-4 md:right-0 md:top-0 md:bottom-0 z-30 w-80 md:w-96 flex-none bg-panelDark/95 border-l border-white/5 p-5 shadow-2xl flex flex-col space-y-4 transform translate-x-[110%] md:translate-x-0 transition-transform duration-300 pointer-events-auto overflow-y-auto">
+                <!-- 详情头部 -->
+                <div class="flex items-center justify-between border-b border-white/10 pb-3 flex-none">
+                    <div class="flex items-center space-x-2">
+                        <div class="w-2.5 h-2.5 rounded-full bg-slate-400" id="detailTypeIndicator"></div>
+                        <span class="text-[11px] font-bold tracking-wider text-slate-400 uppercase" id="detailCategoryLabel">星体详情</span>
+                    </div>
+                    <button id="closeSidebarBtn" class="md:hidden text-slate-400 hover:text-white">
+                        <i class="fa-solid fa-xmark text-sm"></i>
+                    </button>
+                </div>
+
+                <!-- 默认空白展示状态 -->
+                <div id="detailEmptyState" class="flex-1 flex flex-col items-center justify-center text-center p-6 space-y-3">
+                    <div class="w-16 h-16 rounded-full bg-slate-800/50 border border-white/5 flex items-center justify-center text-slate-500 animate-pulse">
+                        <i class="fa-solid fa-hand-pointer text-xl"></i>
+                    </div>
+                    <div>
+                        <p class="text-xs text-slate-400 font-semibold">未选中任何知识星体</p>
+                        <p class="text-[10px] text-slate-500 mt-1 max-w-[200px] mx-auto">在图谱中点击任意星体，可以查阅其深层的前驱后继科学脉络。</p>
+                    </div>
+                </div>
+
+                <!-- 实际详情内容 -->
+                <div id="detailContent" class="hidden flex-1 flex flex-col space-y-4 overflow-y-auto">
+                    <!-- 节点核心 Title 块 -->
+                    <div class="bg-gradient-to-r from-purple-500/10 to-pink-500/5 border border-purple-500/15 rounded-xl p-4 flex flex-col space-y-1.5 relative overflow-hidden">
+                        <div class="absolute -right-4 -bottom-4 opacity-5 text-4xl">
+                            <i class="fa-solid fa-atom"></i>
+                        </div>
+                        <h2 class="text-lg font-bold text-white tracking-wide" id="detailNodeName">石墨烯导电性</h2>
+                        <div class="flex items-center space-x-2">
+                            <span class="px-2 py-0.5 rounded text-[9px] font-semibold bg-blue-500/20 text-blue-300 border border-blue-500/20" id="detailTagLabel">概念</span>
+                            <span class="text-[10px] text-slate-400">ID: <span id="detailNodeId">1023</span></span>
+                        </div>
+                    </div>
+
+                    <!-- 属性定义 -->
+                    <div class="space-y-1.5">
+                        <span class="text-[11px] font-semibold text-slate-400 tracking-wider block">物理与技术本质定义</span>
+                        <p class="text-xs text-slate-300 bg-white/5 p-3 rounded-lg border border-white/5 leading-relaxed" id="detailDesc">
+                            具有优异热电性能的高导热非金属碳材料，基于单层晶体原子网状，可使电荷在极低电阻阻碍下进行高速漂移。
+                        </p>
+                    </div>
+
+                    <!-- 智能网络连接：一阶强关联节点 (前驱后继) -->
+                    <div class="flex-1 flex flex-col min-h-[180px]">
+                        <span class="text-[11px] font-semibold text-slate-400 tracking-wider mb-2 block flex justify-between items-center">
+                            <span>一阶科学血脉网络</span>
+                            <span class="text-[9px] bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded-full" id="neighborCountText">5 关联</span>
+                        </span>
+                        
+                        <div class="flex-1 overflow-y-auto border border-white/5 rounded-lg bg-slate-900/50 p-2 space-y-2" id="detailNeighborsList">
+                            <!-- 由 JS 渲染关联节点 -->
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 图谱全局小雷达统计 -->
+                <div class="bg-white/5 border border-white/5 rounded-lg p-3 flex items-center justify-between flex-none text-[10px] text-slate-400">
+                    <div>
+                        <p>聚类中心度：<span class="text-slate-200 font-semibold" id="clusterCentrality">0.82</span></p>
+                        <p>网络直径：<span class="text-slate-200 font-semibold">6 级</span></p>
+                    </div>
+                    <div class="text-right">
+                        <p>核心度分级：<span class="text-purple-300 font-semibold" id="coreTier">一级核心</span></p>
+                        <p>连通性：<span class="text-green-400 font-semibold">超高连通</span></p>
+                    </div>
+                </div>
+            </aside>
+
+        </div>
+
+    </div>
+
+    <script>
+        /* 
+           我们根据 image_797b84.jpg 自适应配置 6 大核心品类。
+           品类颜色映射和现实物理含义对应。
+        */
+        const CATEGORIES = {
+    "Process": {
+        "id": "Process",
+        "zh": "先进制程",
+        "color": "#ef4444",
+        "glowClass": "node-glow-red",
+        "count": 189
+    },
+    "Device": {
+        "id": "Device",
+        "zh": "器件设备",
+        "color": "#3b82f6",
+        "glowClass": "node-glow-blue",
+        "count": 56
+    },
+    "Physics": {
+        "id": "Physics",
+        "zh": "物理性质",
+        "color": "#8b5cf6",
+        "glowClass": "node-glow-purple",
+        "count": 71
+    },
+    "Material": {
+        "id": "Material",
+        "zh": "前沿材料",
+        "color": "#10b981",
+        "glowClass": "node-glow-green",
+        "count": 40
+    },
+    "Tool": {
+        "id": "Tool",
+        "zh": "工艺工具",
+        "color": "#f59e0b",
+        "glowClass": "node-glow-orange",
+        "count": 91
+    },
+    "Other": {
+        "id": "Other",
+        "zh": "其他概念",
+        "color": "#64748b",
+        "glowClass": "node-glow-gray",
+        "count": 91
+    }
+};
+
+        // 基础实体名称种群
+        const ENTITY_POOL = {
+            "Concept": ["能带理论", "超导电性", "热电效应", "霍尔效应", "激子隧穿", "声子散射", "量子限制效应", "载流子输运", "各向异性", "介电常数", "磁阻效应", "电荷密度波"],
+            "Material": ["单层石墨烯", "碳纳米管", "二硫化钼", "钛合金 TC4", "高温超导氧化物", "硅基半导体", "钙钛矿晶体", "碳化硅 SiC", "氮化镓 GaN", "氟聚合物", "陶瓷复合晶圆"],
+            "Equipment": ["等离子刻蚀机", "化学气相沉积炉", "分子束外延设备", "透射电镜 TEM", "扫描隧道显微镜", "光刻曝光系统", "原子层沉积仪", "磁控溅射台", "激光快速退火炉"],
+            "Process": ["物理气相沉积", "高温退火", "离子注入", "化学气相沉积", "反应等离子刻蚀", "紫外光刻", "原子级清洗", "微拉伸处理", "分子定向结晶", "阳极氧化"],
+            "Property": ["超高导电率", "零电阻特性", "高机械韧性", "光学高透光性", "禁带宽度可调", "热电转换系数", "极低热导率", "高温稳定性", "介电损耗角", "拉伸屈服极限"],
+            "Application": ["高频晶体管", "太赫兹探测器", "柔性可穿戴屏幕", "高能超级电容器", "航天器隔热瓦", "核融合磁线圈", "光子量子计算", "极地压力传感器", "深海高压阀门"]
+        };
+
+        // 实体详细释义模板
+        const DESC_TEMPLATES = {
+            "Concept": "在凝聚态物理和微纳器件领域中的核心概念理论，用于描述微观层面上电子和原子结构相互作用产生的宏观物理响应现象。",
+            "Material": "本知识库录入的先锋物理及化学合成实体材料，具备特殊的二维及三维纳米结构，是现代信息产业及航天关键部件的主要基础载体。",
+            "Equipment": "用于极高精度制造或纳米尺度检测的先进工业设备，通常具备高真空、超低温、电磁精密控制以及极高的重合精度指标。",
+            "Process": "工业生产和科学实验中控制材料微观尺度生长或修饰的精密工艺流程。工艺配方的微小改动将极大影响后续实体的结构稳定。",
+            "Property": "该材料或过程对外表现出的物理性质与特定指标体系，也是设计元器件结构、进行力学承压计算时的核心工程系数。",
+            "Application": "该技术或材料体系走向实用化产业落地的终端场景，代表了现代制造工艺的高精尖转化价值与民生国防应用潜力。"
+        };
+
+        // 存储完整图数据（初始为空，页面加载后从 JSON 动态加载）
+        let graphData = { nodes: [], links: [] };
+
+        // ============================================================
+        // 图谱数据转换：从嵌入式 FALLBACK_DATA 转为 D3.js 格式
+        // 数据由 _regenerate_graph_on_disk() 在每次做笔记时自动嵌入
+        // ============================================================
+        function processKgData(kg) {
+            const concepts = kg.concepts || [];
+            const relations = kg.relations || [];
+
+            // 1. 构建节点索引和节点数组
+            const nameToId = {};
+            const nodes = concepts.map((c, i) => {
+                nameToId[c.name] = i;
+                const cat = c.category ? c.category.charAt(0).toUpperCase() + c.category.slice(1) : 'Other';
+                const validCat = typeof CATEGORIES !== 'undefined' && CATEGORIES[cat] ? cat : 'Other';
+                return {
+                    id: i,
+                    name: c.name,
+                    category: validCat,
+                    val: 7,
+                    desc: c.definition || ''
+                };
+            });
+
+            // 2. 建立链接（去重）
+            const linkSet = new Set();
+            const links = [];
+
+            concepts.forEach((c, i) => {
+                (c.related_to || []).forEach(tgtName => {
+                    const j = nameToId[tgtName];
+                    if (j !== undefined) {
+                        const key = i < j ? i + '-' + j : j + '-' + i;
+                        if (!linkSet.has(key)) {
+                            linkSet.add(key);
+                            links.push({ source: i, target: j, value: 1 });
+                        } else {
+                            var existing = links.find(function (l) {
+                                return (l.source === i && l.target === j) || (l.source === j && l.target === i);
+                            });
+                            if (existing) existing.value = Math.min(existing.value + 1, 5);
+                        }
+                    }
+                });
+            });
+
+            relations.forEach(function (r) {
+                var src = nameToId[r.source];
+                var tgt = nameToId[r.target];
+                if (src !== undefined && tgt !== undefined && src !== tgt) {
+                    var key = src < tgt ? src + '-' + tgt : tgt + '-' + src;
+                    if (!linkSet.has(key)) {
+                        linkSet.add(key);
+                        links.push({ source: src, target: tgt, value: 1 });
+                    }
+                }
+            });
+
+            // 3. 按度数计算节点大小 (val: 4~11)
+            var degree = new Array(nodes.length).fill(0);
+            links.forEach(function (l) { degree[l.source]++; degree[l.target]++; });
+            var maxDeg = Math.max.apply(null, degree) || 1;
+            nodes.forEach(function (n, i) {
+                var ratio = Math.log(degree[i] + 1) / Math.log(maxDeg + 1);
+                n.val = 4 + Math.round(ratio * 7);
+            });
+
+            return { nodes: nodes, links: links };
+        }
+
+        // 数据加载完成后更新 UI
+        function applyGraphData(data) {
+            graphData = data;
+
+            // 更新图例中的分类计数
+            var catCounts = {};
+            data.nodes.forEach(function (n) { catCounts[n.category] = (catCounts[n.category] || 0) + 1; });
+            Object.keys(CATEGORIES || {}).forEach(function (k) {
+                if (catCounts[k] !== undefined) CATEGORIES[k].count = catCounts[k];
+            });
+
+            // 更新顶部统计数字
+            var sn = document.getElementById('statNodeCount');
+            if (sn) sn.textContent = data.nodes.length;
+            var sl = document.getElementById('statLinkCount');
+            if (sl) sl.textContent = data.links.length;
+            var hs = document.getElementById('header-stats');
+            if (hs) hs.textContent = data.nodes.length + ' 概念 · ' + data.links.length + ' 关系';
+        }
+
+        function loadGraphData() {
+            var loadingEl = document.getElementById('loadingStatus');
+            if (typeof FALLBACK_DATA === 'undefined' || !FALLBACK_DATA) {
+                if (loadingEl) {
+                    loadingEl.innerHTML = '❌ 图谱数据缺失。<br>' +
+                        '请先处理笔记生成知识图谱。<br>' +
+                        '或运行: <code>weaver graph</code>';
+                }
+                return false;
+            }
+            var data = processKgData(FALLBACK_DATA);
+            applyGraphData(data);
+            if (loadingEl) loadingEl.textContent = '数据加载完成，构建星系...';
+            return true;
+        }
+
+        // ════════════════════════════════════════════════
+        // 嵌入式备用数据占位符 — _regenerate_graph_on_disk()
+        // 会在复制模板时替换为实际 JSON 数据
+        // ════════════════════════════════════════════════
+        var FALLBACK_DATA = __FALLBACK_DATA_PLACEHOLDER__;
+
+        // 产生稳定随机种子
+
+        // 常量定义
+        const svg = d3.select("#networkSvg");
+        const container = d3.select("#graphContainer");
+        let width = container.node().clientWidth;
+        let height = container.node().clientHeight;
+
+        // 全局图元组定义
+        let gZoomable, linkGroup, nodeGroup, textGroup;
+        let simulation;
+        let zoomBehavior;
+
+        // 全局交互状态
+        let activeSelectedNode = null;
+        let activeHoveredNode = null;
+        let selectedCategoryFilter = null; // 当前高亮的分类
+
+        // 初始化图元结构
+        function initSvgContainers() {
+            svg.html(""); // 清空重绘
+            
+            // 滤镜定义 - 发光效果
+            const defs = svg.append("defs");
+            
+            // 创建缩放外壳
+            gZoomable = svg.append("g").attr("class", "zoom-container");
+            
+            // 图元层级设计：底连线层 -> 顶节点层 -> 顶文字层
+            linkGroup = gZoomable.append("g").attr("class", "links-layer");
+            nodeGroup = gZoomable.append("g").attr("class", "nodes-layer");
+            textGroup = gZoomable.append("g").attr("class", "texts-layer");
+
+            // 监听窗口缩放自适应
+            window.addEventListener("resize", () => {
+                width = container.node().clientWidth;
+                height = container.node().clientHeight;
+                if (simulation) {
+                    simulation.force("center", d3.forceCenter(width / 2, height / 2));
+                    simulation.alpha(0.3).restart();
+                }
+            });
+        }
+
+        function setupSimulation() {
+            const chargeVal = parseInt(document.getElementById("chargeSlider").value);
+            const linkDist = parseInt(document.getElementById("linkDistSlider").value);
+
+            simulation = d3.forceSimulation(graphData.nodes)
+                .force("link", d3.forceLink(graphData.links).id(d => d.id).distance(linkDist))
+                .force("charge", d3.forceManyBody().strength(chargeVal))
+                .force("center", d3.forceCenter(width / 2, height / 2))
+                .force("collision", d3.forceCollide().radius(d => d.val * 1.5 + 4))
+                .on("tick", ticked);
+        }
+
+        // 每步物理更新渲染
+        function ticked() {
+            linkGroup.selectAll(".link-line")
+                .attr("x1", d => d.source.x)
+                .attr("y1", d => d.source.y)
+                .attr("x2", d => d.target.x)
+                .attr("y2", d => d.target.y);
+
+            nodeGroup.selectAll(".node-circle")
+                .attr("cx", d => d.x)
+                .attr("cy", d => d.y);
+
+            textGroup.selectAll(".node-text")
+                .attr("x", d => d.x)
+                .attr("y", d => d.y + (d.val + 10));
+        }
+
+        // 物理引擎手动触发器
+        function sparkGravity() {
+            simulation.alpha(0.6).restart();
+        }
+
+        function setupZoom() {
+            zoomBehavior = d3.zoom()
+                .scaleExtent([0.1, 8]) // 最大放大 8 倍，支持超微距观察
+                .on("zoom", (event) => {
+                    gZoomable.attr("transform", event.transform);
+                });
+
+            svg.call(zoomBehavior);
+            
+            // 初始化缩放居中
+            svg.call(zoomBehavior.transform, d3.zoomIdentity.translate(0, 0).scale(0.85));
+        }
+
+        // 视口强制重归中动画
+        function resetViewport() {
+            svg.transition()
+                .duration(750)
+                .call(zoomBehavior.transform, d3.zoomIdentity.translate(0, 0).scale(0.85));
+        }
+
+        // 定位并突出显示目标节点
+        function focusOnNode(nodeId) {
+            const node = graphData.nodes.find(n => n.id === nodeId);
+            if (!node) return;
+
+            // 转换变换公式使其居中
+            const scale = 1.6;
+            const x = width / 2 - node.x * scale;
+            const y = height / 2 - node.y * scale;
+
+            svg.transition()
+                .duration(800)
+                .call(zoomBehavior.transform, d3.zoomIdentity.translate(x, y).scale(scale));
+
+            handleNodeClick(node);
+        }
+    </script>
+
+    <script>
+        // 动态渲染图例控制面板
+        function renderLegend() {
+            const container = document.getElementById("legendContainer");
+            container.innerHTML = "";
+
+            Object.values(CATEGORIES).forEach(cat => {
+                const wrapper = document.createElement("div");
+                wrapper.className = "flex items-center justify-between p-1.5 rounded-lg hover:bg-white/5 cursor-pointer transition active:scale-[0.98]";
+                wrapper.dataset.catId = cat.id;
+                
+                wrapper.innerHTML = `
+                    <div class="flex items-center space-x-2">
+                        <span class="w-3 h-3 rounded-full border border-white/10" style="background-color: ${cat.color}"></span>
+                        <span class="font-medium text-slate-300">${cat.zh}</span>
+                    </div>
+                    <span class="text-[10px] text-slate-500 font-mono">${cat.count} 星</span>
+                `;
+
+                // 图例过滤点击
+                wrapper.addEventListener("click", () => {
+                    if (selectedCategoryFilter === cat.id) {
+                        selectedCategoryFilter = null;
+                        wrapper.classList.remove("bg-white/10", "border-l-2", "border-purple-500");
+                    } else {
+                        selectedCategoryFilter = cat.id;
+                        document.querySelectorAll("#legendContainer > div").forEach(el => el.classList.remove("bg-white/10", "border-l-2", "border-purple-500"));
+                        wrapper.classList.add("bg-white/10", "border-l-2", "border-purple-500");
+                    }
+                    updateGraphHighlights();
+                });
+
+                container.appendChild(wrapper);
+            });
+        }
+
+        function drawNetwork() {
+            // 1. 连线层绘制 (采用 SVG 柔性链接，降低不透明度突出科技深邃)
+            const links = linkGroup.selectAll(".link-line")
+                .data(graphData.links)
+                .join("line")
+                .attr("class", "link-line link-transition")
+                .attr("stroke", "#475569")
+                .attr("stroke-opacity", 0.15)
+                .attr("stroke-width", d => Math.max(0.6, d.value * 0.5));
+
+            // 2. 节点层绘制 (配置多色霓虹发光滤镜)
+            const nodes = nodeGroup.selectAll(".node-circle")
+                .data(graphData.nodes)
+                .join("circle")
+                .attr("class", d => `node-circle node-transition cursor-pointer ${CATEGORIES[d.category].glowClass}`)
+                .attr("r", d => d.val)
+                .attr("fill", d => CATEGORIES[d.category].color)
+                .attr("stroke", "#1e293b")
+                .attr("stroke-width", 1.5);
+
+            // 3. 标签文字层绘制
+            const texts = textGroup.selectAll(".node-text")
+                .data(graphData.nodes)
+                .join("text")
+                .attr("class", "node-text text-[10px] pointer-events-none fill-slate-400 font-medium tracking-wide")
+                .attr("text-anchor", "middle")
+                .text(d => d.name)
+                .style("visibility", d => d.val > 8 ? "visible" : "hidden"); // 只默认显示较大核心节点的文本
+
+            // 4. 绑定拖拽力反馈
+            nodes.call(d3.drag()
+                .on("start", dragstarted)
+                .on("drag", dragged)
+                .on("end", dragended));
+
+            // 5. 绑定交互事件
+            nodes.on("mouseenter", (event, d) => {
+                activeHoveredNode = d;
+                updateGraphHighlights();
+            }).on("mouseleave", () => {
+                activeHoveredNode = null;
+                updateGraphHighlights();
+            }).on("click", (event, d) => {
+                event.stopPropagation();
+                handleNodeClick(d);
+            });
+
+            // 点击空白区域取消高亮选中
+            svg.on("click", () => {
+                activeSelectedNode = null;
+                document.getElementById("nodeDetailSidebar").classList.add("translate-x-[110%]");
+                document.getElementById("detailEmptyState").classList.remove("hidden");
+                document.getElementById("detailContent").classList.add("hidden");
+                updateGraphHighlights();
+            });
+        }
+
+        function updateGraphHighlights() {
+            const svgNodes = nodeGroup.selectAll(".node-circle");
+            const svgLinks = linkGroup.selectAll(".link-line");
+            const svgTexts = textGroup.selectAll(".node-text");
+
+            // 判定当前需要强化的根源中心
+            const centerNode = activeHoveredNode || activeSelectedNode;
+
+            // 情形 1：正在聚焦并透视某一个星体
+            if (centerNode) {
+                // 找出与此星体关联的所有一阶邻居
+                const neighborIds = new Set();
+                neighborIds.add(centerNode.id);
+
+                graphData.links.forEach(l => {
+                    if (l.source.id === centerNode.id) neighborIds.add(l.target.id);
+                    if (l.target.id === centerNode.id) neighborIds.add(l.source.id);
+                });
+
+                // A. 节点控制
+                svgNodes.style("opacity", d => neighborIds.has(d.id) ? 1.0 : 0.1)
+                        .attr("r", d => d.id === centerNode.id ? d.val * 1.5 : (neighborIds.has(d.id) ? d.val * 1.2 : d.val));
+
+                // B. 关系线控制
+                svgLinks.style("stroke-opacity", l => {
+                    const isRelated = (l.source.id === centerNode.id || l.target.id === centerNode.id);
+                    return isRelated ? 0.8 : 0.04;
+                }).attr("stroke", l => {
+                    const isRelated = (l.source.id === centerNode.id || l.target.id === centerNode.id);
+                    return isRelated ? CATEGORIES[centerNode.category].color : "#475569";
+                });
+
+                // C. 文字控制
+                svgTexts.style("visibility", d => neighborIds.has(d.id) ? "visible" : "hidden")
+                        .style("fill", d => d.id === centerNode.id ? "#ffffff" : "#94a3b8")
+                        .style("font-weight", d => d.id === centerNode.id ? "bold" : "normal");
+
+            // 情形 2：通过分类进行全景过滤高亮
+            } else if (selectedCategoryFilter) {
+                svgNodes.style("opacity", d => d.category === selectedCategoryFilter ? 1.0 : 0.15)
+                        .attr("r", d => d.val);
+                svgLinks.style("stroke-opacity", l => (l.source.category === selectedCategoryFilter && l.target.category === selectedCategoryFilter) ? 0.35 : 0.05);
+                svgTexts.style("visibility", d => d.category === selectedCategoryFilter ? "visible" : (d.val > 8 ? "visible" : "hidden"))
+                        .style("fill", "#94a3b8");
+
+            // 情形 3：标准平静宇宙视态
+            } else {
+                svgNodes.style("opacity", 1.0).attr("r", d => d.val);
+                svgLinks.style("stroke-opacity", 0.15).attr("stroke", "#475569");
+                svgTexts.style("visibility", d => d.val > 8 ? "visible" : "hidden")
+                        .style("fill", "#94a3b8")
+                        .style("font-weight", "normal");
+            }
+        }
+
+        function dragstarted(event, d) {
+            if (!event.active) simulation.alphaTarget(0.3).restart();
+            d.fx = d.x;
+            d.fy = d.y;
+        }
+
+        function dragged(event, d) {
+            d.fx = event.x;
+            d.fy = event.y;
+        }
+
+        function dragended(event, d) {
+            if (!event.active) simulation.alphaTarget(0);
+            // 释开固定，恢复物理自然漂移，也可通过锁定按钮一直锁死
+            d.fx = null;
+            d.fy = null;
+        }
+    </script>
+
+    <script>
+        // 处理知识实体节点点击
+        function handleNodeClick(node) {
+            activeSelectedNode = node;
+            updateGraphHighlights();
+
+            // 1. 弹出右侧抽屉面板
+            const sidebar = document.getElementById("nodeDetailSidebar");
+            sidebar.classList.remove("translate-x-[110%]");
+
+            // 2. 隐藏空白状态，展示实际内容
+            document.getElementById("detailEmptyState").classList.add("hidden");
+            document.getElementById("detailContent").classList.remove("hidden");
+
+            // 3. 填充元数据
+            const catInfo = CATEGORIES[node.category];
+            document.getElementById("detailTypeIndicator").style.backgroundColor = catInfo.color;
+            document.getElementById("detailCategoryLabel").innerText = catInfo.zh;
+            document.getElementById("detailNodeName").innerText = node.name;
+            document.getElementById("detailNodeId").innerText = `N-${node.id + 1000}`;
+            document.getElementById("detailTagLabel").innerText = catInfo.zh;
+            document.getElementById("detailTagLabel").style.backgroundColor = `${catInfo.color}30`;
+            document.getElementById("detailTagLabel").style.color = catInfo.color;
+            document.getElementById("detailTagLabel").style.borderColor = `${catInfo.color}40`;
+            document.getElementById("detailDesc").innerText = node.desc;
+
+            // 统计核心度
+            const centrality = (node.val / 12).toFixed(2);
+            document.getElementById("clusterCentrality").innerText = centrality;
+            document.getElementById("coreTier").innerText = node.val > 9 ? "核心枢纽" : (node.val > 6 ? "二级关联" : "基础概念");
+
+            // 4. 解析并渲染一阶血脉邻居网络
+            const neighborsList = document.getElementById("detailNeighborsList");
+            neighborsList.innerHTML = "";
+
+            const connectedNeighbors = [];
+            graphData.links.forEach(link => {
+                if (link.source.id === node.id) {
+                    connectedNeighbors.push(link.target);
+                } else if (link.target.id === node.id) {
+                    connectedNeighbors.push(link.source);
+                }
+            });
+
+            document.getElementById("neighborCountText").innerText = `${connectedNeighbors.length} 关联星体`;
+
+            connectedNeighbors.forEach(neigh => {
+                const item = document.createElement("div");
+                item.className = "flex items-center justify-between p-2 rounded-lg bg-white/5 hover:bg-white/10 border border-white/5 cursor-pointer transition active:scale-[0.98]";
+                
+                const neighCat = CATEGORIES[neigh.category];
+                item.innerHTML = `
+                    <div class="flex items-center space-x-2">
+                        <span class="w-2.5 h-2.5 rounded-full" style="background-color: ${neighCat.color}"></span>
+                        <span class="text-xs text-slate-200 truncate max-w-[150px] font-medium">${neigh.name}</span>
+                    </div>
+                    <span class="text-[9px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 border border-white/5">${neighCat.zh}</span>
+                `;
+
+                // 交互穿梭
+                item.addEventListener("click", (e) => {
+                    e.stopPropagation();
+                    focusOnNode(neigh.id);
+                });
+
+                neighborsList.appendChild(item);
+            });
+        }
+
+        function setupSearch() {
+            const input = document.getElementById("globalSearchInput");
+            const dropdown = document.getElementById("searchDropdown");
+            const toast = document.getElementById("noResultToast");
+
+            input.addEventListener("input", () => {
+                const query = input.value.trim().toLowerCase();
+                if (!query) {
+                    dropdown.classList.add("hidden");
+                    return;
+                }
+
+                // 模糊匹配节点名称及分类中文
+                const matched = graphData.nodes.filter(n => 
+                    n.name.toLowerCase().includes(query) || 
+                    CATEGORIES[n.category].zh.toLowerCase().includes(query)
+                ).slice(0, 10); // 仅展示最佳 10 条结果提高运行速率
+
+                if (matched.length === 0) {
+                    dropdown.classList.add("hidden");
+                    toast.classList.remove("hidden");
+                    setTimeout(() => toast.classList.add("hidden"), 3000);
+                    return;
+                }
+
+                // 填充补全候选区域
+                dropdown.innerHTML = "";
+                dropdown.classList.remove("hidden");
+
+                matched.forEach(node => {
+                    const option = document.createElement("div");
+                    option.className = "flex items-center justify-between px-4 py-2 hover:bg-white/10 cursor-pointer transition text-xs";
+                    const catInfo = CATEGORIES[node.category];
+                    option.innerHTML = `
+                        <div class="flex items-center space-x-2">
+                            <span class="w-2 h-2 rounded-full" style="background-color: ${catInfo.color}"></span>
+                            <span class="text-slate-100 font-medium">${node.name}</span>
+                        </div>
+                        <span class="text-[9px] text-slate-500">${catInfo.zh}</span>
+                    `;
+
+                    option.addEventListener("click", () => {
+                        dropdown.classList.add("hidden");
+                        input.value = node.name;
+                        focusOnNode(node.id);
+                    });
+
+                    dropdown.appendChild(option);
+                });
+            });
+
+            // 点击外部关闭搜索下拉
+            document.addEventListener("click", (e) => {
+                if (!input.contains(e.target) && !dropdown.contains(e.target)) {
+                    dropdown.classList.add("hidden");
+                }
+            });
+        }
+    </script>
+
+    <script>
+        // 定义多种布局转换模式
+        let currentLayout = "force";
+
+        function setupLayoutPresets() {
+            const btnForce = document.getElementById("layoutForce");
+            const btnCircular = document.getElementById("layoutCircular");
+            const btnCluster = document.getElementById("layoutCluster");
+
+            function updateBtnStyles(activeBtn) {
+                [btnForce, btnCircular, btnCluster].forEach(btn => {
+                    btn.classList.remove("bg-purple-600", "border-purple-500", "text-white");
+                    btn.classList.add("bg-white/5", "border-white/10", "text-slate-300");
+                });
+                activeBtn.classList.remove("bg-white/5", "border-white/10", "text-slate-300");
+                activeBtn.classList.add("bg-purple-600", "border-purple-500", "text-white");
+            }
+
+            // 1. 力导向星系布局
+            btnForce.addEventListener("click", () => {
+                updateBtnStyles(btnForce);
+                currentLayout = "force";
+                setupSimulation();
+            });
+
+            // 2. 环形星轨布局
+            btnCircular.addEventListener("click", () => {
+                updateBtnStyles(btnCircular);
+                currentLayout = "circular";
+                
+                // 停止物理迭代
+                simulation.stop();
+
+                // 按分类将节点排布在不同半径的圆形轨道上
+                const categories = Object.keys(CATEGORIES);
+                const radiusStep = Math.min(width, height) * 0.08;
+
+                graphData.nodes.forEach(node => {
+                    const catIndex = categories.indexOf(node.category);
+                    const r = (catIndex + 1) * radiusStep + (random() * 20 - 10);
+                    // 均匀分配圆角度
+                    const sameCatNodes = graphData.nodes.filter(n => n.category === node.category);
+                    const localIndex = sameCatNodes.indexOf(node);
+                    const angle = (localIndex / sameCatNodes.length) * 2 * Math.PI;
+
+                    node.x = width / 2 + r * Math.cos(angle);
+                    node.y = height / 2 + r * Math.sin(angle);
+                });
+
+                // 平滑驱动过渡
+                gZoomable.selectAll(".node-circle")
+                    .transition().duration(1000)
+                    .attr("cx", d => d.x)
+                    .attr("cy", d => d.y);
+
+                gZoomable.selectAll(".link-line")
+                    .transition().duration(1000)
+                    .attr("x1", d => d.source.x)
+                    .attr("y1", d => d.source.y)
+                    .attr("x2", d => d.target.x)
+                    .attr("y2", d => d.target.y);
+
+                gZoomable.selectAll(".node-text")
+                    .transition().duration(1000)
+                    .attr("x", d => d.x)
+                    .attr("y", d => d.y + (d.val + 10));
+            });
+
+            // 3. 聚类矩阵群落布局
+            btnCluster.addEventListener("click", () => {
+                updateBtnStyles(btnCluster);
+                currentLayout = "cluster";
+                simulation.stop();
+
+                // 划分为 3x2 格网聚类中心
+                const categories = Object.keys(CATEGORIES);
+                const cols = 3;
+                const gridW = width / 4;
+                const gridH = height / 3;
+
+                graphData.nodes.forEach(node => {
+                    const catIndex = categories.indexOf(node.category);
+                    const col = catIndex % cols;
+                    const row = Math.floor(catIndex / cols);
+
+                    const centerX = (col + 1) * gridW;
+                    const centerY = (row + 1) * gridH;
+
+                    // 在各自的聚类网内作环绕排布
+                    const sameCatNodes = graphData.nodes.filter(n => n.category === node.category);
+                    const localIndex = sameCatNodes.indexOf(node);
+                    const r = 35 + (random() * 30);
+                    const angle = (localIndex / sameCatNodes.length) * 2 * Math.PI;
+
+                    node.x = centerX + r * Math.cos(angle);
+                    node.y = centerY + r * Math.sin(angle);
+                });
+
+                // 平滑渲染
+                gZoomable.selectAll(".node-circle")
+                    .transition().duration(1000)
+                    .attr("cx", d => d.x)
+                    .attr("cy", d => d.y);
+
+                gZoomable.selectAll(".link-line")
+                    .transition().duration(1000)
+                    .attr("x1", d => d.source.x)
+                    .attr("y1", d => d.source.y)
+                    .attr("x2", d => d.target.x)
+                    .attr("y2", d => d.target.y);
+
+                gZoomable.selectAll(".node-text")
+                    .transition().duration(1000)
+                    .attr("x", d => d.x)
+                    .attr("y", d => d.y + (d.val + 10));
+            });
+        }
+
+        // 引力与轨道参数调节绑定
+        function setupControls() {
+            const chargeSlider = document.getElementById("chargeSlider");
+            const chargeVal = document.getElementById("chargeVal");
+            const linkSlider = document.getElementById("linkDistSlider");
+            const linkVal = document.getElementById("linkDistVal");
+
+            chargeSlider.addEventListener("input", () => {
+                const val = chargeSlider.value;
+                chargeVal.innerText = val;
+                if (currentLayout === "force") {
+                    simulation.force("charge").strength(parseInt(val));
+                    simulation.alpha(0.3).restart();
+                }
+            });
+
+            linkSlider.addEventListener("input", () => {
+                const val = linkSlider.value;
+                linkVal.innerText = `${val}px`;
+                if (currentLayout === "force") {
+                    simulation.force("link").distance(parseInt(val));
+                    simulation.alpha(0.3).restart();
+                }
+            });
+
+            // 冻结/解冻物理引擎
+            const pauseBtn = document.getElementById("pauseSimulationBtn");
+            const pauseBtnText = document.getElementById("pauseBtnText");
+            let isPaused = false;
+
+            pauseBtn.addEventListener("click", () => {
+                if (currentLayout !== "force") return;
+                isPaused = !isPaused;
+                if (isPaused) {
+                    simulation.stop();
+                    pauseBtnText.innerText = "解冻星体";
+                    pauseBtn.innerHTML = `<i class="fa-solid fa-play"></i><span>解冻星体</span>`;
+                } else {
+                    simulation.alpha(0.3).restart();
+                    pauseBtnText.innerText = "冻结星体";
+                    pauseBtn.innerHTML = `<i class="fa-solid fa-pause"></i><span>冻结星体</span>`;
+                }
+            });
+
+            // 激活微扰扰动
+            document.getElementById("sparkRandomBtn").addEventListener("click", () => {
+                if (currentLayout === "force") {
+                    simulation.alpha(0.8).restart();
+                }
+            });
+
+            // 主题切换控制 (Light <-> Dark)
+            const themeBtn = document.getElementById("themeToggleBtn");
+            let isDark = true;
+            themeBtn.addEventListener("click", () => {
+                isDark = !isDark;
+                if (isDark) {
+                    document.body.classList.remove("light");
+                    document.body.classList.add("dark", "bg-bgDark", "text-slate-200");
+                    themeBtn.innerHTML = `<i class="fa-solid fa-moon"></i>`;
+                } else {
+                    document.body.classList.remove("dark", "bg-bgDark", "text-slate-200");
+                    document.body.classList.add("light", "bg-slate-50", "text-slate-800");
+                    themeBtn.innerHTML = `<i class="fa-solid fa-sun text-yellow-500"></i>`;
+                }
+            });
+
+            // 导出全景 SVG 文件
+            document.getElementById("downloadPngBtn").addEventListener("click", () => {
+                // 获取 SVG 源内容
+                const svgSerializer = new XMLSerializer();
+                let svgString = svgSerializer.serializeToString(document.getElementById("networkSvg"));
+                
+                // 将必要的 XML 空间样式附上，保障本地无网仍可打开运行
+                const blob = new Blob([svgString], {type: "image/svg+xml;charset=utf-8"});
+                const url = URL.createObjectURL(blob);
+                
+                const link = document.createElement("a");
+                link.href = url;
+                link.download = "NoteWeaver_Knowledge_Constellation.svg";
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                URL.revokeObjectURL(url);
+            });
+
+            // 其余功能按钮映射
+            document.getElementById("resetViewBtn").addEventListener("click", resetViewport);
+            document.getElementById("zoomInBtn").addEventListener("click", () => svg.transition().duration(250).call(zoomBehavior.scaleBy, 1.3));
+            document.getElementById("zoomOutBtn").addEventListener("click", () => svg.transition().duration(250).call(zoomBehavior.scaleBy, 0.7));
+            document.getElementById("closeSidebarBtn").addEventListener("click", () => {
+                document.getElementById("nodeDetailSidebar").classList.add("translate-x-[110%]");
+            });
+        }
+    </script>
+
+    <script>
+        window.onload = function () {
+            try {
+                // 0. 加载嵌入式图谱数据（同步，applyGraphData 已设置 graphData）
+                var ok = loadGraphData();
+                if (!ok) return;
+
+                // 隐藏加载状态
+                var loadingEl = document.getElementById('loadingStatus');
+                if (loadingEl) loadingEl.style.opacity = '0';
+                setTimeout(function () { if (loadingEl) loadingEl.style.display = 'none'; }, 500);
+
+                // 1. 初始化页面骨架和图例
+                renderLegend();
+                initSvgContainers();
+
+                // 2. 建立力学物理网络
+                setupSimulation();
+
+                // 3. 漫游与缩放初始化
+                setupZoom();
+
+                // 4. 正式绘制网络视图
+                drawNetwork();
+
+                // 5. 绑定全局动作交互与检索
+                setupSearch();
+                setupLayoutPresets();
+                setupControls();
+
+                // 6. 热气流自适应初始化
+                setTimeout(resetViewport, 200);
+            } catch (e) {
+                var el = document.getElementById('loadingStatus');
+                if (el) {
+                    el.style.display = 'flex';
+                    el.style.opacity = '1';
+                    el.innerHTML = '❌ 渲染错误: ' + e.message + '<br><br>' +
+                        '按 F12 打开控制台查看详情';
+                }
+                console.error(e);
+            }
+        };
+    </script>
+</body>
+</html>

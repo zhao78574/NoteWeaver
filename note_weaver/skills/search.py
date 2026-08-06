@@ -1,7 +1,5 @@
 """知识搜索 Skill — BM25 + 可选语义双通道混合检索"""
 
-import os
-from note_weaver.utils.config import config
 from note_weaver.utils.logger import logger
 from note_weaver.utils.embeddings import HybridRetrieval
 

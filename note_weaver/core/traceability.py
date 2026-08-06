@@ -14,7 +14,6 @@
     # → {"note": "data/Note/半导体物理/Band_Theory.md", "paragraph": "能带弯曲..."}
 """
 
-import os
 import re
 import json
 from pathlib import Path

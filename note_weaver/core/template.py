@@ -17,7 +17,6 @@
 """
 
 import os, yaml
-from typing import Optional
 from dataclasses import dataclass, field
 
 TEMPLATE_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "templates")
