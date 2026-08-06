@@ -31,7 +31,11 @@ class Config:
 
     def _load(self, config_path: Optional[str] = None):
         if config_path is None:
-            config_path = Path(__file__).parent.parent / "config.yaml"
+            pkg_dir = Path(__file__).parent.parent
+            # 优先用户配置；不存在则回退到模板（CI/首次安装场景）
+            config_path = pkg_dir / "config.yaml"
+            if not config_path.exists():
+                config_path = pkg_dir / "config.example.yaml"
         with open(config_path, "r", encoding="utf-8") as f:
             self._data = yaml.safe_load(f)
 
